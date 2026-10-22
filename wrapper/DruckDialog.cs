@@ -38,6 +38,13 @@ internal sealed class DruckDialog : Form
     private readonly Panel prozentZeile;
     private int vorschauPos;                     // Index in auftrag
     private double zoomF = 0;                    // 0 = eingepasst, sonst Faktor
+    // Vorschau-Debounce: jeder Wertwechsel (Seitenbereich-Pfeile! Skalierung,
+    // Annots) loeste SYNCHRON einen HTTP-Abruf auf dem UI-Thread aus - bei
+    // Klickserien staute sich die Warteschlange und der Dialog wirkte ver-
+    // zaegert/kaputt (Nutzer-Fund: "es aendert sich weiterhin die Bis-Seite").
+    // Jetzt: Zahlen stehen sofort, das Bild kommt 250 ms nach dem letzten
+    // Klick.
+    private readonly System.Windows.Forms.Timer vorschauVerzoegert;
 
     private string T(string de, string en) => spr == "en" ? en : de;
     private int S(float v) => (int)Math.Round(v * f);
@@ -136,17 +143,42 @@ internal sealed class DruckDialog : Form
         bereich.CheckedChanged += (_, _) => AuftragNeu();
         von.ValueChanged += (_, _) => { if (von.Value > bis.Value) bis.Value = von.Value; AuftragNeu(); };
         bis.ValueChanged += (_, _) => { if (bis.Value < von.Value) von.Value = bis.Value; AuftragNeu(); };
-        mitAnnots.CheckedChanged += (_, _) => VorschauZeigen();   // Vorschau = echter Druckinhalt
+        mitAnnots.CheckedChanged += (_, _) => VorschauVerzoegertStarten();   // Vorschau = echter Druckinhalt
         skalierung.SelectedIndexChanged += (_, _) =>
         {
             prozentZeile.Visible = skalierung.SelectedIndex == 2;
-            VorschauZeigen();   // Skalierungswechsel sofort sichtbar (Nutzer-Wunsch)
+            VorschauVerzoegertStarten();   // Skalierungswechsel sofort sichtbar (Nutzer-Wunsch)
         };
-        prozent.ValueChanged += (_, _) => { if (skalierung.SelectedIndex == 2) VorschauZeigen(); };
+        prozent.ValueChanged += (_, _) => { if (skalierung.SelectedIndex == 2) VorschauVerzoegertStarten(); };
+
+        // Fokus-Routing: Spinner-Klicks fokussieren das NumericUpDown NICHT
+        // von selbst - der Caret blieb im vorherigen Feld stehen und Pfeil-
+        // tasten veraenderten weiter DAS (Nutzer-Fund). Nach Spinner-Klick
+        // das eigene Feld fokussieren; beim Aktivieren des Seitenbereichs
+        // landet der Caret im Von-Feld.
+        void SpinnerFokussieren(NumericUpDown num)
+        {
+            foreach (Control c in num.Controls)
+                if (c is not TextBox) c.MouseUp += (_, _) => num.Select();
+        }
+        SpinnerFokussieren(von);
+        SpinnerFokussieren(bis);
+        SpinnerFokussieren(kopien);
+        SpinnerFokussieren(prozent);
+        bereich.CheckedChanged += (_, _) => { if (bereich.Checked) von.Select(); };
+
+        // Wer die Von/Bis-Felder anfasst, meint den Seitenbereich: Option
+        // automatisch aktivieren (Nutzer-Fund: Zahlen aenderten sich, aber
+        // der Auftrag blieb auf "Alle Seiten" - die Vorschau reagierte nicht)
+        von.Enter += (_, _) => { if (!bereich.Checked) bereich.Checked = true; };
+        bis.Enter += (_, _) => { if (!bereich.Checked) bereich.Checked = true; };
+
+        vorschauVerzoegert = new System.Windows.Forms.Timer { Interval = 250 };
+        vorschauVerzoegert.Tick += (_, _) => { vorschauVerzoegert.Stop(); VorschauLaden(); };
 
         alles.Checked = true;
         AuftragNeu();
-        Load += (_, _) => { EckenRunden(); VorschauZeigen(); };
+        Load += (_, _) => { EckenRunden(); VorschauLaden(); };
     }
 
     /// <summary>Auf dem Owner zentrieren und per StartPosition.Manual direkt
@@ -161,8 +193,29 @@ internal sealed class DruckDialog : Form
 
     private void VorschauRad(object? s, MouseEventArgs e)
     {
-        ZoomSchritt(e.Delta > 0 ? 0.15 : -0.15);
+        WheelVerarbeiten((Control.ModifierKeys & Keys.Control) == Keys.Control, e.Delta);
         if (e is HandledMouseEventArgs h) h.Handled = true;
+    }
+
+    /// <summary>Mausrad-Umleitung (extrahiert fuer den kopflosen Test):
+    /// ohne Strg = blaettern (im eingepassten Zustand) bzw. Inhalts-Scrollen
+    /// (gezoomt); Strg = Zoom (Konvention; Nutzer-Fund: Zoom allein aufs Rad
+    /// war "falsch").</summary>
+    internal void WheelVerarbeiten(bool strg, int delta)
+    {
+        if (strg)
+        {
+            ZoomSchritt(delta > 0 ? 0.15 : -0.15);
+        }
+        else if (zoomF > 0)
+        {
+            var pos = zpanel.AutoScrollPosition;
+            zpanel.AutoScrollPosition = new Point(-pos.X, -pos.Y + (delta > 0 ? -80 : 80));
+        }
+        else
+        {
+            Blaettern(delta > 0 ? -1 : 1);
+        }
     }
 
     private void ZoomSchritt(double delta)
@@ -525,14 +578,14 @@ internal sealed class DruckDialog : Form
             for (int p = 1; p <= seiten; p++) auftrag.Add(p - 1);
         }
         vorschauPos = 0;
-        if (IsHandleCreated) VorschauZeigen();
+        if (IsHandleCreated) VorschauVerzoegertStarten();
     }
 
     private void Blaettern(int delta)
     {
         if (auftrag.Count == 0) return;
         vorschauPos = Math.Max(0, Math.Min(auftrag.Count - 1, vorschauPos + delta));
-        VorschauZeigen();
+        VorschauVerzoegertStarten();
     }
 
     /// <summary>Seite auf ein A4-Blatt komponieren, GENAU wie der Druck sie
@@ -579,7 +632,17 @@ internal sealed class DruckDialog : Form
         return blatt;
     }
 
-    private void VorschauZeigen()
+    /// <summary>Labels sofort aktualisieren und das Laden des Vorschaubilds
+    /// 250 ms verz?gern - Klickserien (Seitenbereich-Pfeile) triggern so nur
+    /// EINEN Abruf nach Pause statt jeden Klick einzeln zu blockieren.</summary>
+    private void VorschauVerzoegertStarten()
+    {
+        NavAktualisieren();
+        vorschauVerzoegert.Stop();
+        vorschauVerzoegert.Start();
+    }
+
+    private void NavAktualisieren()
     {
         zurueck.Enabled = vorschauPos > 0;
         weiter.Enabled = vorschauPos < auftrag.Count - 1;
@@ -592,6 +655,13 @@ internal sealed class DruckDialog : Form
         }
         int nr = auftrag[vorschauPos];
         seitenZahl.Text = string.Format(T("Seite {0} / {1}", "Page {0} / {1}"), nr + 1, seiten);
+    }
+
+    internal void VorschauLaden()
+    {
+        NavAktualisieren();
+        if (auftrag.Count == 0) return;
+        int nr = auftrag[vorschauPos];
         try
         {
             // Seite in fixer Vorschau-DPI (150) im gewaehlten annots-Modus,
@@ -603,7 +673,8 @@ internal sealed class DruckDialog : Form
             alt?.Dispose();
             ZoomAnwenden();
             vorschauInfo.Text = string.Format(
-                T("Vorschau · Druckauftrag: {0} {1}", "Preview · print job: {0} {1}"),
+                T("Vorschau · Druckauftrag: {0} {1} · Strg+Mausrad zoomt",
+                  "Preview · print job: {0} {1} · Ctrl+wheel zooms"),
                 auftrag.Count, T(auftrag.Count == 1 ? "Seite" : "Seiten", auftrag.Count == 1 ? "page" : "pages"));
         }
         catch (Exception ex)

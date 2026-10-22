@@ -2,6 +2,23 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-22.
 
+## v0.21.28 — Druckdialog: Seitenbereich-Steuerung und Mausrad geradegerückt
+- Fehlerbehobung (Nutzer-Fund: Pfeil-Klicks im Seitenbereich schienen beim
+  falschen Feld zu landen): Jeder Pfeilklick lud sofort ein neues Vor-
+  schaubild per HTTP-Abruf auf dem Benutzeroberflächen-Thread — bei Klick-
+  serien staute sich die Warteschlange, der Dialog reihte sich verzögert
+  durch und die gerade nicht gemeinten Zahlen schienen sich zu ändern, während
+  der Cursor im vorherigen Feld stehen blieb. Jetzt: **Zahlen reagieren
+  sofort**, das Vorschaubild kommt 250 ms nach dem letzten Klick (Debounce).
+- **Fokus folgt dem Feld**: Spinner-Klicks fokussieren jetzt ihr eigenes
+  Zahlenfeld (WinForms tut das nicht von selbst — der Cursor blieb im
+  vorherigen stehen und Pfeiltasten änderten weiter dessen Wert); beim
+  Aktivieren von „Seitenbereich" landet der Cursor im Von-Feld.
+- **Mausrad blättert wieder** (Nutzer-Fund: „wird gezoomt, das ist falsch"):
+  Mausrad wechselt die Seite (bzw. scrollt den gezoomten Inhalt), Zoom nur
+  noch mit Strg+Mausrad oder über die Zoomknöpfe — Hinweis steht unter der
+  Vorschau.
+
 ## v0.21.27 — Vorschau zoombaren, Skalierung sichtbar, Absturz-Fix
 - Fehlerbehobung (Nutzer-Fund: „kurz die Druckvorschau gesehen, dann hat sich
   die App beendet"): Die Vorschauseite kam als GDI+-Bild direkt aus dem

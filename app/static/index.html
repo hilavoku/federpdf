@@ -524,7 +524,7 @@
   <button class="tbtn" onclick="document.getElementById('file').click()" title="PDF öffnen (Strg+O)"><span class="i">&#xE8E5;</span><span class="lbl">Öffnen</span></button>
   <button class="tbtn save" id="saveBtn" onclick="saveDoc()" title="Speichern (Strg+S)"><span class="i">&#xE74E;</span><span class="lbl">Speichern</span></button>
   <button class="tbtn" id="saveAsBtn" onclick="saveasClick()" title="Kopie an anderem Ort speichern" disabled><span class="i">&#xE8C8;</span><span class="lbl">Speichern unter</span></button>
-  <button class="tbtn" id="prBtn" onclick="printDoc()" title="Drucken (mit Signaturen, Texten und Formulareinträgen)" disabled><span class="i">&#xE749;</span></button>
+  <button class="tbtn" id="prBtn" onclick="printDoc()" title="Drucken (Strg+P, mit Signaturen, Texten und Formulareinträgen)" disabled><span class="i">&#xE749;</span></button>
   <div class="sep"></div>
   <button class="tbtn" id="sigBtn" onclick="toggleSigPanel(event)" title="Signaturen verwalten – Kachel aufs Papier ziehen">
     <img id="sigCurImg" alt=""><span id="sigCurName">Signatur…</span><span class="i">&#xE70D;</span>
@@ -1013,7 +1013,7 @@ const WOERTER = {
   "PDF öffnen (Strg+O)": "Open PDF (Ctrl+O)",
   "Speichern (Strg+S)": "Save (Ctrl+S)",
   "Kopie an anderem Ort speichern": "Save a copy elsewhere",
-  "Drucken (mit Signaturen, Texten und Formulareinträgen)": "Print (with signatures, texts and form entries)",
+  "Drucken (Strg+P, mit Signaturen, Texten und Formulareinträgen)": "Print (Ctrl+P, with signatures, texts and form entries)",
   "Signaturen verwalten – Kachel aufs Papier ziehen": "Manage signatures – drag a tile onto the paper",
   "Lesemodus – Klicken schaltet die Bearbeitung frei (Text, Bilder, Signaturen, Formen)": "Read mode – click unlocks editing (text, images, signatures, shapes)",
   "Bearbeiten aktiv – Klicken schaltet zurück in den Lesemodus (die Seite ruht)": "Edit mode active – click returns to read mode (the paper rests)",
@@ -3260,8 +3260,16 @@ async function removePage() {
 /* ---------- Drucken ---------- */
 async function printDoc() {
   if (!cur) return;
-  stat(E('Druckansicht wird erzeugt…', 'Creating print view…'));
+  stat(E('Druckdialog wird geöffnet…', 'Opening print dialog…'));
   try {
+    if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {
+      // Echter Druckpfad: der Wrapper rendert je Seite in DRUCKERAUFLOESUNG
+      // (GDI, eigener Dialog mit Vorschau). Der iframe-Druck unten rastered nur
+      // Bildschirmqualitaet (120 dpi) - der gab den unscharfen Ausdruck.
+      window.chrome.webview.postMessage('druck|' + cur.id + '|' + (currentPage + 1));
+      return;
+    }
+    // Fallback (nackter Browser/Entwicklung): alte Druckansicht
     const html = await (await fetch('/api/print/' + cur.id)).text();
     const fr = document.createElement('iframe');
     fr.style.position = 'fixed'; fr.style.right = '0'; fr.style.bottom = '0';
@@ -3271,6 +3279,14 @@ async function printDoc() {
     fr.onload = () => { setTimeout(() => { fr.contentWindow.print(); stat(E('Druckdialog geöffnet.', 'Print dialog opened.'), true); }, 400); };
   } catch (e) { stat(E('Drucken fehlgeschlagen', 'Printing failed')); }
 }
+
+// Rueckkanal vom Wrapper-Druckpfad: true = Auftrag gesendet, null = abgebrochen,
+// false = fehlgeschlagen
+window.pwDruckFertig = function (ok) {
+  if (ok === true) stat(E('Druckauftrag gesendet.', 'Print job sent.'), true);
+  else if (ok === null) stat(E('Drucken abgebrochen.', 'Printing cancelled.'), true);
+  else stat(E('Drucken fehlgeschlagen', 'Printing failed'));
+};
 
 /* ---------- Speichern / Speichern unter / Einbrennen ---------- */
 async function saveDoc(flatten) {
@@ -3977,6 +3993,7 @@ document.addEventListener('keydown', (ev) => {
     if (!document.getElementById('suchFeld').classList.contains('offen')) sucheUmschalten();
     else document.getElementById('searchBox').focus();
   }
+  else if (ev.ctrlKey && (ev.key === 'p' || ev.key === 'P')) { ev.preventDefault(); printDoc(); }
   else if (ev.key === 'Escape') {
     if (ctxMenu.style.display === 'block') hideCtxMenu();
     else if (document.getElementById('infoBox').style.display === 'block') infoBoxSchliessen();

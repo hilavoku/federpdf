@@ -1,6 +1,33 @@
 # FederPDF — Changelog
 
-Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-16.
+Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-22.
+
+## v0.21.24 — Drucken scharf, mit eigener Vorschau
+- Fehlerbehobung (Nutzer-Fund: „Ausdruck komplett unscharf"): Der alte
+  Druckweg schickte eine HTML-Seite mit **120-dpi-Bildschirm-Rastern** durch
+  den WebView2-Druckdialog — raus kam ein verwaschenes Bildschirmfoto statt
+  eines Dokuments. Neuer Weg: Der Wrapper druckt selbst per GDI. Der Server
+  liefert je Seite (`/api/druckseite`) ein PNG in **Druckerauflösung** (bis
+  600 dpi, mit Signaturen, Texten, Formen und Formularwerten — auch
+  ungespeicherte Änderungen), `/api/druckinfo` die Seitenmaße; der Wrapper
+  zeichnet jede Seite maßhaltig und seitenverhältnisgetreu auf das Papier
+  (automatisch gedreht bei Hoch/Quer-Kollision, zentriert, innerhalb der
+  druckbaren Fläche). Beweise: Stiller Headless-Druck über „Microsoft Print
+  to PDF" ergibt effektiv **600×600 dpi** pro A4-Seite (vorher 120), Suite
+  prüft Auflösung und Annotationen im Druckbild (133 Checks).
+- **Eigener Druckdialog mit Vorschau** (Nutzer-Rückmeldung: „keine
+  Druckvorschau zu sehen"): Der Windows-Standarddruckdialog zeigt keine
+  Vorschau und frißt beim Öffnen Sekunden bis Minuten, weil er den Status
+  schlafender Netzwerkdrucker abfragt. FederPDF zeigt jetzt einen eigenen
+  Dialog im App-Design: links die **Seitenvorschau aus dem echten
+  Druckinhalt** (blätterbar), rechts Drucker (nur Namensliste — keine
+  Statusabfragen), Seitenbereich (alle/aktuelle/von–bis) und Kopien. Alle
+  druckernahen Abfragen (Auflösung, Auftrag) laufen erst **nach** dem
+  Klick im Hintergrund-Thread — die Oberfläche blockiert nie.
+- Drucken geht jetzt auch über **Strg+P**; der Titel des Druckknopfes nennt
+  es. Im nackten Browser (Entwicklung) bleibt der alte iframe-Weg als
+  Fallback. Vom Nutzer am eigenen HP-Drucker verifiziert: 2 Seiten,
+  „sieht gut aus".
 
 ## v0.21.23 — Zweite Drehung verzerrt die Vorschau nicht mehr
 - Fehlerbehobung (Nutzer-Fund, ING-Löwe): Die erste Drehung sah korrekt aus,

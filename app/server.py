@@ -34,7 +34,7 @@ os.makedirs(SIGN_DIR, exist_ok=True)
 
 app = FastAPI(title="FederPDF")
 
-APP_VERSION = "0.21.23"   # wird im Über-Dialog (Klick auf Logo/FederPDF) angezeigt
+APP_VERSION = "0.21.24"   # wird im Über-Dialog (Klick auf Logo/FederPDF) angezeigt
 
 
 @app.middleware("http")
@@ -2225,6 +2225,29 @@ def print_view(did: str):
             "<style>body{margin:0}img{display:block;width:100%;page-break-after:always}"
             "@page{margin:0}</style></head><body>" + "".join(imgs) + "</body></html>")
     return HTMLResponse(html)
+
+
+@app.get("/api/druckinfo/{did}")
+def druck_info(did: str):
+    """Seitenzahl + Seitenmasse (Punkte) fuer den Druckpfad des Wrappers: der
+    Wrapper druckt per GDI in DRUCKERAUFLOESUNG - der alte iframe-/window.print-
+    Weg rastered nur Bildschirmqualitaet (unscharfer Ausdruck, Nutzer-Fund)."""
+    d = _doc(did)
+    return {"pages": d.page_count,
+            "groessen": [[round(p.rect.width, 2), round(p.rect.height, 2)] for p in d]}
+
+
+@app.get("/api/druckseite/{did}")
+def druck_seite(did: str, nr: int = 0, dpi: int = 300):
+    """Eine Seite als PNG in DRUCKaufloesung - mit Annotationen und Formular-
+    werten (annots=True), aus dem AKTUELLEN Dokumentstand (auch ungespeichert).
+    dpi geklemmt: 600 reicht jedem Laser, mehr waere reiner Speicherfraß."""
+    d = _doc(did)
+    if nr < 0 or nr >= d.page_count:
+        raise HTTPException(404, "Seite existiert nicht")
+    dpi = max(72, min(int(dpi), 600))
+    pix = d[nr].get_pixmap(dpi=dpi, annots=True)
+    return Response(content=pix.tobytes("png"), media_type="image/png")
 
 
 @app.get("/api/search/{did}")

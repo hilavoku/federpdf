@@ -1,7 +1,7 @@
 # FederPDF-Testsuite: startet den gebauten Server und prueft die API
-# end-to-end (120 Checks: Signaturen, Text, Formen, Markieren, OCR, KI,
-# Bilder, Undo, Speichern). Sie erzeugt eigene Wegwerf-Signaturen und
-# Fixtures — Nutzerdaten werden nie angefasst.
+# end-to-end (Signaturen, Text, Formen, Markieren, OCR, KI, Bilder, Undo,
+# Speichern, Druck). Sie erzeugt eigene Wegwerf-Signaturen und Fixtures —
+# Nutzerdaten werden nie angefasst.
 #
 # Ausfuehrung:   py -3.14 tests/pdfwerkstatt_test.py
 #   (erwartet die installierte App unter dem Standardpfad; abweichend:
@@ -1013,6 +1013,41 @@ try:
     kdoc.close()
     check("Altbestand geheilt: AP-Farbe aus Marker", geheilt, "")
 
+    # ---------- v0.21.24: Druckpfad in Druckeraufloesung (Nutzer-Fund: unscharfer Ausdruck) ----------
+    # Der Wrapper druckt jetzt per GDI: /api/druckinfo liefert Seitenmasse,
+    # /api/druckseite rendert je Seite in Drucker-DPI (mit Annotationen) - statt
+    # des alten iframe-Drucks mit 120-dpi-Bildschirm-Rastern.
+    pd = requests.get(f"{BASE}/api/demo", timeout=15).json()
+    pdid = pd["id"]
+    pi = requests.get(f"{BASE}/api/druckinfo/{pdid}", timeout=10).json()
+    check("druckinfo: Seitenzahl + Massen",
+          pi.get("pages") == 3 and len(pi.get("groessen") or []) == 3
+          and all(g[0] > 100 and g[1] > 100 for g in pi["groessen"]), str(pi))
+    r = requests.get(f"{BASE}/api/druckseite/{pdid}?nr=0&dpi=150", timeout=30)
+    drv = _PILImage.open(io.BytesIO(r.content))
+    b0, h0 = pi["groessen"][0]
+    check("druckseite: Pixel = Seitenmasse x dpi (150)",
+          r.headers.get("content-type") == "image/png"
+          and abs(drv.size[0] - b0 / 72.0 * 150) < 3 and abs(drv.size[1] - h0 / 72.0 * 150) < 3,
+          f"{drv.size} vs {b0}x{h0}pt")
+    # Annotationen muessen im Druckbild liegen (annots=True): Stempel setzen und
+    # seine Farbe an der Stempelmitte nachweisen. Eigene Wegwerf-Signatur, denn
+    # ts1 wird frueher in der Suite umbenannt.
+    buf2 = io.BytesIO()
+    _PILImage.new("RGBA", (300, 100), (20, 60, 160, 255)).save(buf2, "PNG")
+    dsig = requests.post(f"{BASE}/api/signature/upload",
+                         files={"file": ("DruckSig.png", buf2.getvalue(), "image/png")},
+                         data={"remove_bg": "0"}, timeout=10).json()["file"]
+    r = requests.post(f"{BASE}/api/stamp/{pdid}", data={
+        "page": "0", "x": "100", "y": "100", "width": "140", "fname": dsig}, timeout=10)
+    assert r.ok and r.json().get("ok"), r.text
+    r = requests.get(f"{BASE}/api/druckseite/{pdid}?nr=0&dpi=150", timeout=30)
+    da = _PILImage.open(io.BytesIO(r.content)).convert("RGB")
+    k = (int((100 + 70) / 72.0 * 150), int((100 + 23) / 72.0 * 150))
+    pr = da.getpixel(k)
+    check("druckseite enthaelt Annotationen (Stempel blau an der Mitte)",
+          pr[0] < 100 and pr[2] > 120, f"{pr} @ {k}")
+
     # --- Sperrzustand nach Server-Neustart (zweiter Prozess, anderer Port) ---
     PORT2 = PORT + 1
     srv2 = subprocess.Popen([EXE, "--port", str(PORT2)], creationflags=subprocess.CREATE_NO_WINDOW)
@@ -1044,7 +1079,7 @@ finally:
     sigdir = os.path.join(os.path.dirname(EXE), "signatures")
     try:
         for fn in os.listdir(sigdir):
-            if fn.startswith(("TestSig", "UndoSig", "TestSig Umbenannt", "PwSig")):
+            if fn.startswith(("TestSig", "UndoSig", "TestSig Umbenannt", "PwSig", "DruckSig")):
                 os.remove(os.path.join(sigdir, fn))
     except Exception:
         pass

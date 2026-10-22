@@ -1,6 +1,7 @@
 using Microsoft.Web.WebView2.WinForms;
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
+using System.Drawing.Printing;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -175,6 +176,13 @@ internal static class Program
                         // Schwarz-Rot-Gold-Verlauf; der INNERE Ziehzone-Ring
                         // faerbt sich seit v0.21.4 passend zum Design
                         form.ThemeSetzen(msg == "theme|light");
+                    }
+                    else if (msg != null && msg.StartsWith("druck|"))
+                    {
+                        // "druck|<did>|<aktuelleSeite1basiert>" - drittes Feld optional
+                        var teile = msg.Split('|');
+                        int aktuelle = teile.Length > 2 && int.TryParse(teile[2], out int p) ? p : 0;
+                        await DruckenAsync(teile[1], aktuelle, webView);
                     }
                     else if (msg != null && msg.StartsWith("saveas|"))
                     {
@@ -385,6 +393,143 @@ internal static class Program
         {
             return false;
         }
+    }
+
+    /// <summary>Echter Druck in DRUCKERAUFLOESUNG (Nutzer-Fund 22.10.2026,
+    /// "Ausdruck komplett unscharf"): Der fruehere Weg druckte die HTML-Druck-
+    /// ansicht mit 120-dpi-Bildschirm-Rastern ueber den WebView2-Druckdialog.
+    /// Jetzt rendert der Server jede Seite (mit Annotationen/Formularwerten, im
+    /// AKTUELLEN Stand) in Druckerqualitaet und dieses PrintDocument zeichnet
+    /// sie einpassend aufs Papier. Vorschau + Einstellungen im eigenen
+    /// DruckDialog (Nutzer: "keine Druckvorschau zu sehen"). Rueckkanal an die
+    /// UI: pwDruckFertig(true|false|null).</summary>
+    private static async Task DruckenAsync(string did, int aktuelleSeite, WebView2 webView)
+    {
+        try
+        {
+            int seiten;
+            double[][] masse;
+            using (var http = new HttpClient(new System.Net.Http.HttpClientHandler { UseProxy = false })
+                   { Timeout = TimeSpan.FromSeconds(20) })
+            {
+                var json = await http.GetStringAsync($"http://127.0.0.1:{port}/api/druckinfo/{did}");
+                using var doc = JsonDocument.Parse(json);
+                seiten = doc.RootElement.GetProperty("pages").GetInt32();
+                masse = doc.RootElement.GetProperty("groessen").EnumerateArray()
+                    .Select(a => a.EnumerateArray().Select(v => v.GetDouble()).ToArray()).ToArray();
+            }
+            if (seiten <= 0 || masse.Length < seiten)
+            {
+                await Melden(webView, "null");
+                return;
+            }
+
+            Image BildLader(int nr, int dpi) => SeiteVomServer(did, nr, dpi);
+            using var dlg = new DruckDialog(seiten, aktuelleSeite, BildLader, uiSprache);
+            if (dlg.ShowDialog(webView.FindForm()) != DialogResult.OK)
+            {
+                await Melden(webView, "null");
+                return;
+            }
+            string druckerName = dlg.GewaehlterDrucker;
+            int kopien = dlg.Kopien;
+            var liste = dlg.SeitenListe;
+            if (liste.Count == 0 || string.IsNullOrEmpty(druckerName))
+            {
+                await Melden(webView, "null");
+                return;
+            }
+
+            await Task.Run(() =>
+            {
+                var ps = new PrinterSettings { PrinterName = druckerName };
+                ps.Copies = (short)Math.Max(1, Math.Min(kopien, 99));
+                // Render-DPI = Aufloesung des GEWAHLTEN Druckers (geklemmt: 600 dpi
+                // ist Laserqualitaet, mehr waere nur Speicher). Erst HIER lesen - im
+                // Hintergrund-Task: DefaultPageSettings fragt beim Offline-
+                // Netzwerkdrucker Status ab und darf deshalb die UI blockieren.
+                int dpi = 600;
+                try
+                {
+                    var r = ps.DefaultPageSettings.PrinterResolution;
+                    if (r != null && r.X > 0) dpi = Math.Clamp(r.X, 150, 600);
+                }
+                catch { }
+
+                using var druck = new PrintDocument { PrinterSettings = ps };
+                druck.DefaultPageSettings.Margins = new Margins(0, 0, 0, 0);
+                int index = 0;
+                druck.PrintPage += (_, ev) =>
+                {
+                    if (index >= liste.Count) { ev.HasMorePages = false; return; }
+                    int nr = liste[index++];
+                    using var http = new HttpClient(new System.Net.Http.HttpClientHandler { UseProxy = false })
+                    { Timeout = TimeSpan.FromSeconds(120) };
+                    using var antwort = http.GetStreamAsync(
+                        $"http://127.0.0.1:{port}/api/druckseite/{did}?nr={nr}&dpi={dpi}").Result;
+                    using var ms = new MemoryStream();
+                    antwort.CopyTo(ms);
+                    ms.Position = 0;
+                    using var bild = System.Drawing.Image.FromStream(ms);
+                    SeiteEinpassen(ev.Graphics, ev.PageSettings, bild, masse[nr][0], masse[nr][1]);
+                    ev.HasMorePages = index < liste.Count;
+                };
+                druck.Print();
+            });
+            await Melden(webView, "true");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                (uiSprache == "en" ? "Printing failed:\n" : "Drucken fehlgeschlagen:\n") + ex.Message,
+                "FederPDF", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            await Melden(webView, "false");
+        }
+    }
+
+    /// <summary>Eine Druckseite vom Server holen (mit Annotationen, aktueller
+    /// Stand). Der MemoryStream bleibt absichtlich offen: GDI+ liest das Bild
+    /// traege aus dem Stream (Dispose wuerde spaeter knallen).</summary>
+    private static Image SeiteVomServer(string did, int nr, int dpi)
+    {
+        using var http = new HttpClient(new System.Net.Http.HttpClientHandler { UseProxy = false })
+        { Timeout = TimeSpan.FromSeconds(30) };
+        using var antwort = http.GetStreamAsync(
+            $"http://127.0.0.1:{port}/api/druckseite/{did}?nr={nr}&dpi={dpi}").Result;
+        var ms = new MemoryStream();
+        antwort.CopyTo(ms);
+        ms.Position = 0;
+        return System.Drawing.Image.FromStream(ms);
+    }
+
+    private static async Task Melden(WebView2 webView, string wert)
+    {
+        try { await webView.CoreWebView2.ExecuteScriptAsync($"window.pwDruckFertig && window.pwDruckFertig({wert});"); }
+        catch { /* UI evtl. schon geschlossen */ }
+    }
+
+    /// <summary>Eine PDF-Seite einpassend auf die druckbare Flaeche zeichnen:
+    /// Seitenverhaeltnis erhalten, zentriert, Hoch/Quer-Zusammenprall automatisch
+    /// um 90 Grad gedreht (wie jeder PDF-Viewer), nie ueber die druckbare Flaeche
+    /// (Hardware-Raender) hinaus. Koordinaten in 1/100 Zoll - GraphicsUnit.Display
+    /// ist beim Drucker-Graphics genau das.</summary>
+    private static void SeiteEinpassen(Graphics g, PageSettings seite, Image bild, double bPt, double hPt)
+    {
+        g.PageUnit = GraphicsUnit.Display;
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        g.SmoothingMode = SmoothingMode.HighQuality;
+
+        var druckbar = seite.PrintableArea;   // 1/100 Zoll, Hardware-Raender abgezogen
+        float ax = Math.Max(0f, druckbar.X), ay = Math.Max(0f, druckbar.Y);
+        float aw = Math.Max(1f, druckbar.Width - ax), ah = Math.Max(1f, druckbar.Height - ay);
+
+        bool gleich = (bPt > hPt) == (druckbar.Width > druckbar.Height);
+        if (!gleich) bild.RotateFlip(RotateFlipType.Rotate90FlipNone);
+        double bZoll = (gleich ? bPt : hPt) / 72.0;
+        double hZoll = (gleich ? hPt : bPt) / 72.0;
+        double skala = Math.Min(aw / (bZoll * 100.0), ah / (hZoll * 100.0));
+        double b = bZoll * 100.0 * skala, h = hZoll * 100.0 * skala;
+        g.DrawImage(bild, ax + (float)((aw - b) / 2.0), ay + (float)((ah - h) / 2.0), (float)b, (float)h);
     }
 
     private static int GetFreePort()

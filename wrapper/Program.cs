@@ -425,8 +425,11 @@ internal static class Program
             }
 
             Image BildLader(int nr, int dpi) => SeiteVomServer(did, nr, dpi);
-            using var dlg = new DruckDialog(seiten, aktuelleSeite, BildLader, uiSprache);
-            if (dlg.ShowDialog(webView.FindForm()) != DialogResult.OK)
+            var owner = webView.FindForm();
+            using var dlg = new DruckDialog(seiten, aktuelleSeite, BildLader, uiSprache,
+                owner?.DeviceDpi ?? 96);
+            if (owner != null) dlg.ZentrierenAuf(owner);   // im DPI-Kontext des Owners erstellen
+            if (dlg.ShowDialog(owner) != DialogResult.OK)
             {
                 await Melden(webView, "null");
                 return;

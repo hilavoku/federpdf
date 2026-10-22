@@ -2,6 +2,20 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-22.
 
+## v0.21.25 — Druckdialog im PDFgear-Stil
+- Überarbeitung (Nutzer-Wunsch nach PDFgear-Vorbild): Der Druckdialog ist
+  jetzt **deutlich größer** (1080×700 statt 760×560) und im Stil der App —
+  große **Seitenvorschau links** auf dunklem Papier-Hintergrund (blätterbar
+  per Pfeiltasten oder Mausrad), rechts die **Einstellungsspalte** mit
+  Drucker, Kopien und Seitenbereich, wobei die Optionen die Seitenzahlen
+  anzeigen („Alle Seiten (3)", „Aktuelle Seite (2)"). Eigene Titelzeile mit
+  Schließen-Knopf und DWM-Eckenrundung wie das Hauptfenster; der
+  Drucken-Knopf ist als Akzentknopf hervorgehoben.
+- **DPI-Scaling repariert:** Der Dialog blieb auf Monitoren mit Skalierung
+  (Notebook 150 %) auf 96-dpi-Entwurfsmaß „zu klein" — jetzt skaliert er wie
+  das Hauptfenster mit (`AutoScaleMode.Dpi`), und die Vorschau rendert in
+  Monitordpi (bis 192 dpi statt 96) — auch das Vorschaubild ist scharf.
+
 ## v0.21.24 — Drucken scharf, mit eigener Vorschau
 - Fehlerbehobung (Nutzer-Fund: „Ausdruck komplett unscharf"): Der alte
   Druckweg schickte eine HTML-Seite mit **120-dpi-Bildschirm-Rastern** durch

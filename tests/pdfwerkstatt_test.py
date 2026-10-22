@@ -1047,6 +1047,14 @@ try:
     pr = da.getpixel(k)
     check("druckseite enthaelt Annotationen (Stempel blau an der Mitte)",
           pr[0] < 100 and pr[2] > 120, f"{pr} @ {k}")
+    # v0.21.26: annots=0 druckt pures Papier (Druckdialog-Option "ohne
+    # Markierungen") - der Stempel muss WEG sein
+    r = requests.get(f"{BASE}/api/druckseite/{pdid}?nr=0&dpi=150&annots=0", timeout=30)
+    oh = _PILImage.open(io.BytesIO(r.content)).convert("RGB")
+    pr2 = oh.getpixel(k)
+    check("druckseite annots=0: Stempel weg (weiss)",
+          r.headers.get("content-type") == "image/png" and pr2[0] > 230 and pr2[1] > 230,
+          f"{pr2} @ {k}")
 
     # --- Sperrzustand nach Server-Neustart (zweiter Prozess, anderer Port) ---
     PORT2 = PORT + 1

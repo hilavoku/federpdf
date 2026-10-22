@@ -2,6 +2,22 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-22.
 
+## v0.21.26 — Druckdialog: Duplex, Skalierung, Theme, „ohne Markierungen"
+- Erweiterung nach PDFgear-Vorbild (Nutzer-Wünsche):
+  - **Duplex**: Einseitig / Beidseitig – Kante lang / Beidseitig – Kante kurz,
+    wird an den Druckertreiber durchgereicht.
+  - **Skalierung**: „An Seitenrand anpassen" (bisheriges Verhalten mit
+    automatischer Drehung) / „Tatsächliche Größe" (100 %, keine Drehung —
+    Überhänge clippt der Treiber wie bei Acrobat) / „Benutzerdefiniert"
+    (25–400 %).
+  - **„Signaturen, Markierungen und Formulare drucken"** abwählbar — der
+    Ausdruck ist dann pures Papier (neuer `annots`-Parameter von
+    `/api/druckseite`); die Vorschau schaltet live mit, sie zeigt stets
+    den echten Druckinhalt.
+  - **Theme folgt der App**: Der Dialog übernimmt das helle oder dunkle
+    Design der Web-UI (Farben aus deren Palette); Umschalten im Hauptfenster
+    wirkt ab dem nächsten Druckdialog-Öffnen.
+
 ## v0.21.25 — Druckdialog im PDFgear-Stil
 - Überarbeitung (Nutzer-Wunsch nach PDFgear-Vorbild): Der Druckdialog ist
   jetzt **deutlich größer** (1080×700 statt 760×560) und im Stil der App —

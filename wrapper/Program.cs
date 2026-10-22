@@ -15,6 +15,9 @@ internal static class Program
     // UI-Sprache ("de"/"en"): Startwert aus einstellungen.json, laufend per
     // Webmessage "sprache|en" aus der UI nachgezogen (Splash/Dialoge)
     private static string uiSprache = "de";
+    // UI-Theme (hell): Startwert aus einstellungen.json, laufend per
+    // Webmessage "theme|light|dark" nachgezogen (Druckdialog palettiert mit)
+    private static bool uiHell;
 
     [STAThread]
     private static void Main(string[] args)
@@ -53,6 +56,7 @@ internal static class Program
             }
         }
         catch { /* kaputte/kompatible Datei: Deutsch/Dunkel bleibt */ }
+        uiHell = startLicht;
 
         var psi = new ProcessStartInfo
         {
@@ -175,7 +179,8 @@ internal static class Program
                         // Fensterrand ist seit v0.16.9 in beiden Designs der
                         // Schwarz-Rot-Gold-Verlauf; der INNERE Ziehzone-Ring
                         // faerbt sich seit v0.21.4 passend zum Design
-                        form.ThemeSetzen(msg == "theme|light");
+                        uiHell = msg == "theme|light";
+                        form.ThemeSetzen(uiHell);
                     }
                     else if (msg != null && msg.StartsWith("druck|"))
                     {
@@ -424,10 +429,10 @@ internal static class Program
                 return;
             }
 
-            Image BildLader(int nr, int dpi) => SeiteVomServer(did, nr, dpi);
+            Image BildLader(int nr, int dpi, bool annots) => SeiteVomServer(did, nr, dpi, annots);
             var owner = webView.FindForm();
             using var dlg = new DruckDialog(seiten, aktuelleSeite, BildLader, uiSprache,
-                owner?.DeviceDpi ?? 96);
+                owner?.DeviceDpi ?? 96, uiHell);
             if (owner != null) dlg.ZentrierenAuf(owner);   // im DPI-Kontext des Owners erstellen
             if (dlg.ShowDialog(owner) != DialogResult.OK)
             {
@@ -437,6 +442,9 @@ internal static class Program
             string druckerName = dlg.GewaehlterDrucker;
             int kopien = dlg.Kopien;
             var liste = dlg.SeitenListe;
+            var duplex = dlg.DuplexModus;
+            bool mitAnnots = dlg.MitAnnots;
+            double skalierung = dlg.Skalierung;
             if (liste.Count == 0 || string.IsNullOrEmpty(druckerName))
             {
                 await Melden(webView, "null");
@@ -447,6 +455,7 @@ internal static class Program
             {
                 var ps = new PrinterSettings { PrinterName = druckerName };
                 ps.Copies = (short)Math.Max(1, Math.Min(kopien, 99));
+                try { ps.Duplex = duplex; } catch { /* Treiber ohne Duplex: einseitig */ }
                 // Render-DPI = Aufloesung des GEWAHLTEN Druckers (geklemmt: 600 dpi
                 // ist Laserqualitaet, mehr waere nur Speicher). Erst HIER lesen - im
                 // Hintergrund-Task: DefaultPageSettings fragt beim Offline-
@@ -469,12 +478,12 @@ internal static class Program
                     using var http = new HttpClient(new System.Net.Http.HttpClientHandler { UseProxy = false })
                     { Timeout = TimeSpan.FromSeconds(120) };
                     using var antwort = http.GetStreamAsync(
-                        $"http://127.0.0.1:{port}/api/druckseite/{did}?nr={nr}&dpi={dpi}").Result;
+                        $"http://127.0.0.1:{port}/api/druckseite/{did}?nr={nr}&dpi={dpi}&annots={(mitAnnots ? 1 : 0)}").Result;
                     using var ms = new MemoryStream();
                     antwort.CopyTo(ms);
                     ms.Position = 0;
                     using var bild = System.Drawing.Image.FromStream(ms);
-                    SeiteEinpassen(ev.Graphics, ev.PageSettings, bild, masse[nr][0], masse[nr][1]);
+                    SeiteEinpassen(ev.Graphics, ev.PageSettings, bild, masse[nr][0], masse[nr][1], skalierung);
                     ev.HasMorePages = index < liste.Count;
                 };
                 druck.Print();
@@ -490,15 +499,15 @@ internal static class Program
         }
     }
 
-    /// <summary>Eine Druckseite vom Server holen (mit Annotationen, aktueller
-    /// Stand). Der MemoryStream bleibt absichtlich offen: GDI+ liest das Bild
-    /// traege aus dem Stream (Dispose wuerde spaeter knallen).</summary>
-    private static Image SeiteVomServer(string did, int nr, int dpi)
+    /// <summary>Eine Druckseite vom Server holen (annots=false = pures Papier
+    /// ohne Signaturen/Markierungen/Formulare). Der MemoryStream bleibt
+    /// absichtlich offen: GDI+ liest das Bild traege aus dem Stream.</summary>
+    private static Image SeiteVomServer(string did, int nr, int dpi, bool annots)
     {
         using var http = new HttpClient(new System.Net.Http.HttpClientHandler { UseProxy = false })
         { Timeout = TimeSpan.FromSeconds(30) };
         using var antwort = http.GetStreamAsync(
-            $"http://127.0.0.1:{port}/api/druckseite/{did}?nr={nr}&dpi={dpi}").Result;
+            $"http://127.0.0.1:{port}/api/druckseite/{did}?nr={nr}&dpi={dpi}&annots={(annots ? 1 : 0)}").Result;
         var ms = new MemoryStream();
         antwort.CopyTo(ms);
         ms.Position = 0;
@@ -511,12 +520,15 @@ internal static class Program
         catch { /* UI evtl. schon geschlossen */ }
     }
 
-    /// <summary>Eine PDF-Seite einpassend auf die druckbare Flaeche zeichnen:
-    /// Seitenverhaeltnis erhalten, zentriert, Hoch/Quer-Zusammenprall automatisch
-    /// um 90 Grad gedreht (wie jeder PDF-Viewer), nie ueber die druckbare Flaeche
-    /// (Hardware-Raender) hinaus. Koordinaten in 1/100 Zoll - GraphicsUnit.Display
-    /// ist beim Drucker-Graphics genau das.</summary>
-    private static void SeiteEinpassen(Graphics g, PageSettings seite, Image bild, double bPt, double hPt)
+    /// <summary>Eine PDF-Seite zeichnen: Seitenverhaeltnis erhalten, zentriert
+    /// in der druckbaren Flaeche, nie ueber Hardware-Raender hinaus.
+    /// skalierung 0 = an Seitenrand anpassen (mit automatischer 90-Grad-
+    /// Drehung bei Hoch/Quer-Kollision, wie jeder PDF-Viewer); jeder andere
+    /// Wert = fester Faktor (1,0 = tatsaechliche Groesse) OHNE Drehung -
+    /// Ueberhaenge clippt der Treiber wie bei Acrobat. Koordinaten in
+    /// 1/100 Zoll - GraphicsUnit.Display ist beim Drucker genau das.</summary>
+    private static void SeiteEinpassen(Graphics g, PageSettings seite, Image bild,
+                                       double bPt, double hPt, double skalierung = 0)
     {
         g.PageUnit = GraphicsUnit.Display;
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
@@ -526,11 +538,14 @@ internal static class Program
         float ax = Math.Max(0f, druckbar.X), ay = Math.Max(0f, druckbar.Y);
         float aw = Math.Max(1f, druckbar.Width - ax), ah = Math.Max(1f, druckbar.Height - ay);
 
+        bool passend = skalierung <= 0;
         bool gleich = (bPt > hPt) == (druckbar.Width > druckbar.Height);
-        if (!gleich) bild.RotateFlip(RotateFlipType.Rotate90FlipNone);
-        double bZoll = (gleich ? bPt : hPt) / 72.0;
-        double hZoll = (gleich ? hPt : bPt) / 72.0;
-        double skala = Math.Min(aw / (bZoll * 100.0), ah / (hZoll * 100.0));
+        if (passend && !gleich) bild.RotateFlip(RotateFlipType.Rotate90FlipNone);
+        double bZoll = (passend && !gleich ? hPt : bPt) / 72.0;
+        double hZoll = (passend && !gleich ? bPt : hPt) / 72.0;
+        double skala = passend
+            ? Math.Min(aw / (bZoll * 100.0), ah / (hZoll * 100.0))
+            : skalierung;
         double b = bZoll * 100.0 * skala, h = hZoll * 100.0 * skala;
         g.DrawImage(bild, ax + (float)((aw - b) / 2.0), ay + (float)((ah - h) / 2.0), (float)b, (float)h);
     }

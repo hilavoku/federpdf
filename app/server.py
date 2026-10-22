@@ -34,7 +34,7 @@ os.makedirs(SIGN_DIR, exist_ok=True)
 
 app = FastAPI(title="FederPDF")
 
-APP_VERSION = "0.21.25"   # wird im Über-Dialog (Klick auf Logo/FederPDF) angezeigt
+APP_VERSION = "0.21.26"   # wird im Über-Dialog (Klick auf Logo/FederPDF) angezeigt
 
 
 @app.middleware("http")
@@ -2238,15 +2238,16 @@ def druck_info(did: str):
 
 
 @app.get("/api/druckseite/{did}")
-def druck_seite(did: str, nr: int = 0, dpi: int = 300):
-    """Eine Seite als PNG in DRUCKaufloesung - mit Annotationen und Formular-
-    werten (annots=True), aus dem AKTUELLEN Dokumentstand (auch ungespeichert).
-    dpi geklemmt: 600 reicht jedem Laser, mehr waere reiner Speicherfraß."""
+def druck_seite(did: str, nr: int = 0, dpi: int = 300, annots: int = 1):
+    """Eine Seite als PNG in DRUCKaufloesung - annots=1 (Standard) mit
+    Annotationen und Formularwerten, annots=0 pures Papier ohne Signaturen/
+    Markierungen/Formulare (Druckdialog-Option). dpi geklemmt: 600 reicht
+    jedem Laser, mehr waere reiner Speicherfraß."""
     d = _doc(did)
     if nr < 0 or nr >= d.page_count:
         raise HTTPException(404, "Seite existiert nicht")
     dpi = max(72, min(int(dpi), 600))
-    pix = d[nr].get_pixmap(dpi=dpi, annots=True)
+    pix = d[nr].get_pixmap(dpi=dpi, annots=bool(annots))
     return Response(content=pix.tobytes("png"), media_type="image/png")
 
 

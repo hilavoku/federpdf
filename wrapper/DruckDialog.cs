@@ -3,56 +3,66 @@ using System.Runtime.InteropServices;
 
 namespace FederPDF;
 
-/// <summary>Druckdialog im PDFgear-Stil (Nutzer-Wunsch 22.10.2026): GROSSE
-/// Seitenvorschau links (blätterbar, aus dem echten Druckinhalt inkl.
-/// Annotationen), dunkle Einstellungsspalte rechts (Drucker, Kopien,
-/// Seitenbereich mit Seitenzahlen in den Optionen). Rahmenlos wie das
-/// Hauptfenster (eigene Titelzeile, DWM-Rundung).
-/// DPI: KEIN WinForms-AutoScale — das erstellte den Dialog im DPI-Kontext des
-/// Owners, überschrieb die gepinnte 96-Basislinie und reskalierte bei einem
-/// DPI-Wechsel nach der Erstellung die Fensterfläche physisch (144→96 =
-/// 2/3-Verkleinerung, Mess-Fund 22.10.2026). Stattdessen deterministisch wie
-/// das Hauptfenster: Layout wird mit dem ÜBERGEBENEN Owner-DPI-Faktor gebaut
-/// und das Fenster per StartPosition.Manual direkt am Zielort erstellt — kein
-/// DPI-Wechsel, keine Überraschungen.</summary>
+/// <summary>Druckdialog im PDFgear-Stil: GROSSE Seitenvorschau links
+/// (blätterbar, aus dem echten Druckinhalt), Einstellungsspalte rechts mit
+/// Drucker, Kopien, Seitenbereich, "Signaturen/Markierungen/Formulare drucken"
+/// (Nutzer-Wunsch: auch OHNE druckbar), Duplex und Skalierung (Nutzer-Wunsch
+/// nach PDFgear-Vorbild). Folgt dem App-Theme (hell/dunkel, Farben aus der
+/// Web-UI). Rahmenlos wie das Hauptfenster (eigene Titelzeile, DWM-Rundung).
+/// DPI: KEIN WinForms-AutoScale (erstellte den Dialog im Owner-DPI-Kontext und
+/// reskalierte ihn bei DPI-Wechsel physisch, 144→96 = 2/3, Mess-Fund
+/// 22.10.2026) — stattdessen wird das Layout mit dem Owner-DPI-Faktor gebaut
+/// und das Fenster per StartPosition.Manual direkt am Zielort erstellt.</summary>
 internal sealed class DruckDialog : Form
 {
     private readonly int seiten;
     private readonly List<int> auftrag;          // 0-basierte Seiten des Drucks
-    private readonly Func<int, int, Image> seiteBild;   // (nr, dpi) -> Bild
+    private readonly Func<int, int, bool, Image> seiteBild;   // (nr, dpi, annots)
     private readonly string spr;
     private readonly int startSeite;             // 1-basiert, aus der UI
     private readonly float f;                    // DPI-Faktor (dpi/96), s. S()
 
-    private readonly PictureBox vorschau;
-    private readonly ComboBox drucker;
-    private readonly RadioButton alles, aktuelle, bereich;
-    private readonly NumericUpDown von, bis, kopien;
-    private readonly Button zurueck, weiter, drucken, abbruch;
-    private readonly Label seitenZahl, vorschauInfo;
-    private int vorschauPos;                     // Index in auftrag
+    // Theme-Paletten (Farben aus der Web-UI: body / body.light)
+    private readonly bool hell;
+    private readonly Color bg, spalteFarbe, feld, papier, textFarbe, muted, akzent, akzentText, akzentHover;
 
-    private static Color Hint => Color.FromArgb(23, 25, 29);       // #17191d App-Hintergrund
-    private static Color Spalte => Color.FromArgb(28, 31, 36);     // Einstellungsspalte
-    private static Color Flaeche => Color.FromArgb(44, 49, 58);    // #2c313a Felder/Knöpfe
-    private static Color Papier => Color.FromArgb(33, 37, 43);     // Vorschau-Zone
-    private static Color Schrift => Color.FromArgb(230, 233, 238); // #e6e9ee
-    private static Color Gedaempft => Color.FromArgb(151, 160, 175); // #97a0af
-    private static Color Akzent => Color.FromArgb(76, 194, 255);   // #4cc2ff
+    private readonly PictureBox vorschau;
+    private readonly ComboBox drucker, duplex, skalierung;
+    private readonly RadioButton alles, aktuelle, bereich;
+    private readonly NumericUpDown von, bis, kopien, prozent;
+    private readonly Button zurueck, weiter, drucken, abbruch;
+    private readonly CheckBox mitAnnots;
+    private readonly Label seitenZahl, vorschauInfo, prozentLabel;
+    private readonly Panel prozentZeile;
+    private int vorschauPos;                     // Index in auftrag
 
     private string T(string de, string en) => spr == "en" ? en : de;
     private int S(float v) => (int)Math.Round(v * f);
     private Font Ft(float pt, FontStyle stil = FontStyle.Regular)
         => new("Segoe UI", (float)Math.Round(pt * f, 1), stil);
-    private Font FtFett(float pt) => Ft(pt, FontStyle.Bold);
 
     public string GewaehlterDrucker => drucker.SelectedItem as string ?? "";
     public int Kopien => (int)kopien.Value;
     public List<int> SeitenListe => auftrag;
+    public bool MitAnnots => mitAnnots.Checked;
+    public Duplex DuplexModus => duplex.SelectedIndex switch
+    {
+        1 => Duplex.Vertical,      // Kante lang
+        2 => Duplex.Horizontal,    // Kante kurz
+        _ => Duplex.Simplex,
+    };
+    /// <summary>skalierung 0 = einpassen; sonst Faktor (1,0 = tatsaechliche Groesse).</summary>
+    public double Skalierung => skalierung.SelectedIndex switch
+    {
+        1 => 1.0,
+        2 => (double)prozent.Value / 100.0,
+        _ => 0.0,
+    };
 
-    /// <param name="dpi">DeviceDpi des Owner-Fensters (steuert die Layout-Skalierung).</param>
-    public DruckDialog(int seitenAnzahl, int aktuelleSeite, Func<int, int, Image> bildLader,
-                       string uiSprache, int dpi)
+    /// <param name="dpi">DeviceDpi des Owner-Fensters (Layout-Skalierung).</param>
+    /// <param name="hell">App-Theme (true = helles Design der Web-UI).</param>
+    public DruckDialog(int seitenAnzahl, int aktuelleSeite, Func<int, int, bool, Image> bildLader,
+                       string uiSprache, int dpi, bool hell)
     {
         seiten = seitenAnzahl;
         seiteBild = bildLader;
@@ -61,18 +71,45 @@ internal sealed class DruckDialog : Form
         auftrag = new List<int>();
         f = Math.Max(1, dpi) / 96f;
 
+        if (hell)
+        {
+            this.hell = true;
+            bg = Color.FromArgb(238, 241, 245);        // --bg #eef1f5
+            spalteFarbe = Color.FromArgb(230, 234, 240);
+            feld = Color.White;                        // --chrome
+            papier = Color.FromArgb(221, 227, 234);
+            textFarbe = Color.FromArgb(26, 31, 39);    // --text #1a1f27
+            muted = Color.FromArgb(98, 108, 122);      // --muted
+            akzent = Color.FromArgb(11, 110, 201);     // --accent #0b6ec9
+            akzentText = Color.White;
+            akzentHover = Color.FromArgb(10, 99, 181);
+        }
+        else
+        {
+            bg = Color.FromArgb(23, 25, 29);           // App-Hintergrund
+            spalteFarbe = Color.FromArgb(28, 31, 36);
+            feld = Color.FromArgb(44, 49, 58);         // #2c313a
+            papier = Color.FromArgb(33, 37, 43);
+            textFarbe = Color.FromArgb(230, 233, 238); // #e6e9ee
+            muted = Color.FromArgb(151, 160, 175);     // #97a0af
+            akzent = Color.FromArgb(76, 194, 255);     // #4cc2ff
+            akzentText = Color.FromArgb(18, 22, 28);
+            akzentHover = Color.FromArgb(120, 208, 255);
+        }
+
         Text = T("Drucken", "Print");
         FormBorderStyle = FormBorderStyle.None;
         MaximizeBox = false; MinimizeBox = false;
         ShowInTaskbar = false;
-        BackColor = Hint;
-        ForeColor = Schrift;
+        BackColor = bg;
+        ForeColor = textFarbe;
         Font = Ft(9.5f);
-        ClientSize = new Size(S(1080), S(700));
+        ClientSize = new Size(S(1080), S(760));
 
         TitelzeileBauen();
         (vorschau, zurueck, weiter, seitenZahl, vorschauInfo) = VorschauBauen();
-        (drucker, alles, aktuelle, bereich, von, bis, kopien, drucken, abbruch) = SpalteBauen();
+        (drucker, duplex, skalierung, alles, aktuelle, bereich, von, bis, kopien, prozent, prozentLabel,
+         prozentZeile, mitAnnots, drucken, abbruch) = SpalteBauen();
 
         drucken.Click += (_, _) => { DialogResult = DialogResult.OK; Close(); };
         abbruch.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
@@ -87,6 +124,8 @@ internal sealed class DruckDialog : Form
         bereich.CheckedChanged += (_, _) => AuftragNeu();
         von.ValueChanged += (_, _) => { if (von.Value > bis.Value) bis.Value = von.Value; AuftragNeu(); };
         bis.ValueChanged += (_, _) => { if (bis.Value < von.Value) von.Value = bis.Value; AuftragNeu(); };
+        mitAnnots.CheckedChanged += (_, _) => VorschauZeigen();   // Vorschau = echter Druckinhalt
+        skalierung.SelectedIndexChanged += (_, _) => prozentZeile.Visible = skalierung.SelectedIndex == 2;
 
         alles.Checked = true;
         AuftragNeu();
@@ -94,8 +133,8 @@ internal sealed class DruckDialog : Form
     }
 
     /// <summary>Auf dem Owner zentrieren und per StartPosition.Manual direkt
-    /// dort erstellen — der Dialog entsteht damit im DPI-Kontext des Owners
-    /// und erfährt keinen DPI-Wechsel nach der Erstellung.</summary>
+    /// dort erstellen — der Dialog entsteht im DPI-Kontext des Owners und
+    /// erfährt keinen DPI-Wechsel nach der Erstellung.</summary>
     public void ZentrierenAuf(Form owner)
     {
         StartPosition = FormStartPosition.Manual;
@@ -106,12 +145,12 @@ internal sealed class DruckDialog : Form
     // ---------------------------------------------------------------- Titelzeile
     private void TitelzeileBauen()
     {
-        var leiste = new Panel { Dock = DockStyle.Top, Height = S(48), BackColor = Hint };
+        var leiste = new Panel { Dock = DockStyle.Top, Height = S(48), BackColor = bg };
         var titelText = new Label
         {
             Text = T("Drucken", "Print"),
             Font = Ft(12.5f, FontStyle.Bold),
-            ForeColor = Schrift,
+            ForeColor = textFarbe,
             AutoSize = true,
             Location = new Point(S(20), S(11)),
         };
@@ -122,8 +161,8 @@ internal sealed class DruckDialog : Form
             Size = new Size(S(34), S(34)),
             Location = new Point(ClientSize.Width - S(44), S(7)),
             FlatStyle = FlatStyle.Flat,
-            BackColor = Hint,
-            ForeColor = Gedaempft,
+            BackColor = bg,
+            ForeColor = muted,
             Anchor = AnchorStyles.Top | AnchorStyles.Right,
         };
         zuBtn.FlatAppearance.BorderSize = 0;
@@ -153,7 +192,7 @@ internal sealed class DruckDialog : Form
         {
             Location = new Point(0, S(48)),
             Size = new Size(S(748), ClientSize.Height - S(48)),
-            BackColor = Papier,
+            BackColor = papier,
         };
         var bild = new PictureBox
         {
@@ -161,35 +200,32 @@ internal sealed class DruckDialog : Form
             BackColor = Color.White,
             BorderStyle = BorderStyle.FixedSingle,
             Location = new Point(S(44), S(76)),
-            Size = new Size(S(660), S(520)),
-            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+            Size = new Size(S(660), S(580)),
         };
         zone.Controls.Add(bild);
 
-        var zr = new Button { Text = "\u2039", Font = Ft(15f), Size = new Size(S(44), S(34)), Location = new Point(S(308), ClientSize.Height - S(78)), FlatStyle = FlatStyle.Flat, BackColor = Papier, ForeColor = Schrift, Anchor = AnchorStyles.Bottom };
-        var zv = new Button { Text = "\u203A", Font = Ft(15f), Size = new Size(S(44), S(34)), Location = new Point(S(396), ClientSize.Height - S(78)), FlatStyle = FlatStyle.Flat, BackColor = Papier, ForeColor = Schrift, Anchor = AnchorStyles.Bottom };
+        var zr = new Button { Text = "\u2039", Font = Ft(15f), Size = new Size(S(44), S(34)), Location = new Point(S(308), ClientSize.Height - S(78)), FlatStyle = FlatStyle.Flat, BackColor = papier, ForeColor = textFarbe };
+        var zv = new Button { Text = "\u203A", Font = Ft(15f), Size = new Size(S(44), S(34)), Location = new Point(S(396), ClientSize.Height - S(78)), FlatStyle = FlatStyle.Flat, BackColor = papier, ForeColor = textFarbe };
         zr.FlatAppearance.BorderSize = 0; zv.FlatAppearance.BorderSize = 0;
-        zr.FlatAppearance.MouseOverBackColor = Flaeche; zv.FlatAppearance.MouseOverBackColor = Flaeche;
+        zr.FlatAppearance.MouseOverBackColor = feld; zv.FlatAppearance.MouseOverBackColor = feld;
 
         var zahl = new Label
         {
             Text = "1 / 1",
             Font = Ft(10.5f),
-            ForeColor = Schrift,
+            ForeColor = textFarbe,
             TextAlign = ContentAlignment.MiddleCenter,
             Size = new Size(S(84), S(34)),
             Location = new Point(S(332), ClientSize.Height - S(74)),
-            Anchor = AnchorStyles.Bottom,
         };
         var info = new Label
         {
             Text = "",
             Font = Ft(8.25f),
-            ForeColor = Gedaempft,
+            ForeColor = muted,
             TextAlign = ContentAlignment.MiddleCenter,
             Size = new Size(S(500), S(20)),
             Location = new Point(S(124), ClientSize.Height - S(40)),
-            Anchor = AnchorStyles.Bottom,
         };
         zone.Controls.Add(zr); zone.Controls.Add(zv); zone.Controls.Add(zahl); zone.Controls.Add(info);
         Controls.Add(zone);
@@ -197,32 +233,35 @@ internal sealed class DruckDialog : Form
     }
 
     // ---------------------------------------------------------------- Spalte rechts
-    private (ComboBox, RadioButton, RadioButton, RadioButton, NumericUpDown, NumericUpDown, NumericUpDown, Button, Button) SpalteBauen()
+    private (ComboBox, ComboBox, ComboBox, RadioButton, RadioButton, RadioButton,
+             NumericUpDown, NumericUpDown, NumericUpDown, NumericUpDown, Label, Panel, CheckBox, Button, Button) SpalteBauen()
     {
-        int rand = S(26), fw = S(332) - rand * 2;   // Innenrand, Feldbreite
+        int rand = S(26), fw = S(332) - rand * 2;
         var spalte = new Panel
         {
             Location = new Point(S(748), S(48)),
             Size = new Size(S(332), ClientSize.Height - S(48)),
-            BackColor = Spalte,
+            BackColor = spalteFarbe,
         };
 
-        int y = S(24);
-        spalte.Controls.Add(Caption(T("Drucker", "Printer"), ref y, rand));
-        var cb = new ComboBox
+        ComboBox Kombi() => new()
         {
-            Location = new Point(rand, y),
             Size = new Size(fw, S(34)),
             DropDownStyle = ComboBoxStyle.DropDownList,
             FlatStyle = FlatStyle.Flat,
-            BackColor = Flaeche,
-            ForeColor = Schrift,
+            BackColor = feld,
+            ForeColor = textFarbe,
             Font = Ft(10f),
         };
+
+        int y = S(24);
+
+        spalte.Controls.Add(Caption(T("Drucker", "Printer"), ref y, rand));
+        var cb = Kombi(); cb.Location = new Point(rand, y);
         try
         {
             // NUR Namen - KEINE Statusabfragen: die blockieren an schlafenden
-            // Netzwerkdruckern (Nutzer-HP im Ruhemodus) die Dialog-Anzeige
+            // Netzwerkdruckern die Dialog-Anzeige
             foreach (string p in PrinterSettings.InstalledPrinters) cb.Items.Add(p);
             string def = "";
             try { def = new PrinterSettings().PrinterName; } catch { }
@@ -231,7 +270,7 @@ internal sealed class DruckDialog : Form
         }
         catch { }
         spalte.Controls.Add(cb);
-        y += S(34 + 22);
+        y += S(34 + 20);
 
         spalte.Controls.Add(Caption(T("Kopien", "Copies"), ref y, rand));
         var ko = new NumericUpDown
@@ -239,14 +278,12 @@ internal sealed class DruckDialog : Form
             Location = new Point(rand, y),
             Size = new Size(S(120), S(32)),
             Minimum = 1, Maximum = 99, Value = 1,
-            BackColor = Flaeche,
-            ForeColor = Schrift,
-            BorderStyle = BorderStyle.None,
+            BackColor = feld, ForeColor = textFarbe, BorderStyle = BorderStyle.None,
             Font = Ft(10.5f),
             TextAlign = HorizontalAlignment.Center,
         };
         spalte.Controls.Add(ko);
-        y += S(32 + 24);
+        y += S(32 + 20);
 
         spalte.Controls.Add(Caption(T("Seiten", "Pages"), ref y, rand));
         y += S(6);
@@ -254,41 +291,80 @@ internal sealed class DruckDialog : Form
         var rk = Radio(string.Format(T("Aktuelle Seite ({0})", "Current page ({0})"), startSeite), ref y, rand);
         var rb = Radio(T("Seitenbereich", "Page range"), ref y, rand);
         spalte.Controls.Add(ra); spalte.Controls.Add(rk); spalte.Controls.Add(rb);
-        y += S(8);
+        y += S(6);
 
-        var vonL = new Label { Text = T("von", "from"), Font = Ft(9f), ForeColor = Gedaempft, AutoSize = true, Location = new Point(rand + S(28), y + S(6)) };
+        var vonL = new Label { Text = T("von", "from"), Font = Ft(9f), ForeColor = muted, AutoSize = true, Location = new Point(rand + S(28), y + S(6)) };
         var vn = new NumericUpDown
         {
             Location = new Point(rand + S(66), y),
             Size = new Size(S(88), S(30)),
             Minimum = 1, Maximum = seiten, Value = 1,
-            BackColor = Flaeche, ForeColor = Schrift, BorderStyle = BorderStyle.None,
-            Font = Ft(10f),
-            TextAlign = HorizontalAlignment.Center,
+            BackColor = feld, ForeColor = textFarbe, BorderStyle = BorderStyle.None,
+            Font = Ft(10f), TextAlign = HorizontalAlignment.Center,
         };
-        var bisL = new Label { Text = T("bis", "to"), Font = Ft(9f), ForeColor = Gedaempft, AutoSize = true, Location = new Point(rand + S(164), y + S(6)) };
+        var bisL = new Label { Text = T("bis", "to"), Font = Ft(9f), ForeColor = muted, AutoSize = true, Location = new Point(rand + S(164), y + S(6)) };
         var bs = new NumericUpDown
         {
             Location = new Point(rand + S(196), y),
             Size = new Size(S(88), S(30)),
             Minimum = 1, Maximum = seiten, Value = seiten,
-            BackColor = Flaeche, ForeColor = Schrift, BorderStyle = BorderStyle.None,
-            Font = Ft(10f),
-            TextAlign = HorizontalAlignment.Center,
+            BackColor = feld, ForeColor = textFarbe, BorderStyle = BorderStyle.None,
+            Font = Ft(10f), TextAlign = HorizontalAlignment.Center,
         };
         spalte.Controls.Add(vonL); spalte.Controls.Add(vn); spalte.Controls.Add(bisL); spalte.Controls.Add(bs);
-        y += S(30 + 18);
+        y += S(30 + 14);
 
-        var hinweis = new Label
+        // Was gedruckt wird (Nutzer-Wunsch: auch OHNE Markierungen druckbar).
+        // Die Vorschau schaltet live mit, sie zeigt stets den echten Druckinhalt.
+        var chk = new CheckBox
         {
-            Text = T("Der Ausdruck enthält Signaturen, Texte, Markierungen\nund ausgefüllte Formulare – auch ungespeicherte Änderungen.",
-                     "The printout includes signatures, texts, markup\nand filled form fields – including unsaved changes."),
-            Font = Ft(8.25f),
-            ForeColor = Gedaempft,
+            Text = T("Signaturen, Markierungen und\nFormulare drucken", "Print signatures, markup\nand form fields"),
+            Font = Ft(9.5f),
+            ForeColor = textFarbe,
+            Checked = true,
+            AutoSize = true,
             Location = new Point(rand, y),
-            Size = new Size(fw, S(36)),
         };
-        spalte.Controls.Add(hinweis);
+        spalte.Controls.Add(chk);
+        y += S(48 + 14);
+
+        spalte.Controls.Add(Caption(T("Duplex", "Duplex"), ref y, rand));
+        var du = Kombi(); du.Location = new Point(rand, y);
+        du.Items.AddRange(new object[]
+        {
+            T("Einseitig", "One-sided"),
+            T("Beidseitig – Kante lang", "Two-sided – long edge"),
+            T("Beidseitig – Kante kurz", "Two-sided – short edge"),
+        });
+        du.SelectedIndex = 0;
+        spalte.Controls.Add(du);
+        y += S(34 + 20);
+
+        spalte.Controls.Add(Caption(T("Skalierung", "Scaling"), ref y, rand));
+        var sk = Kombi(); sk.Location = new Point(rand, y);
+        sk.Items.AddRange(new object[]
+        {
+            T("An Seitenrand anpassen", "Fit to page"),
+            T("Tatsächliche Größe", "Actual size"),
+            T("Benutzerdefiniert", "Custom"),
+        });
+        sk.SelectedIndex = 0;
+        spalte.Controls.Add(sk);
+        y += S(34 + 8);
+
+        // Prozentzeile (Platz reserviert, sichtbar nur bei "Benutzerdefiniert")
+        var pz = new Panel { Location = new Point(rand, y), Size = new Size(fw, S(30)), BackColor = spalteFarbe, Visible = false };
+        var pzFeld = new NumericUpDown
+        {
+            Location = new Point(0, 0),
+            Size = new Size(S(88), S(30)),
+            Minimum = 25, Maximum = 400, Value = 100,
+            BackColor = feld, ForeColor = textFarbe, BorderStyle = BorderStyle.None,
+            Font = Ft(10f), TextAlign = HorizontalAlignment.Center,
+        };
+        var pzL = new Label { Text = "%", Font = Ft(10f), ForeColor = muted, AutoSize = true, Location = new Point(S(96), S(5)) };
+        pz.Controls.Add(pzFeld); pz.Controls.Add(pzL);
+        spalte.Controls.Add(pz);
 
         var ok = new Button
         {
@@ -297,12 +373,12 @@ internal sealed class DruckDialog : Form
             Size = new Size(fw, S(46)),
             Location = new Point(rand, spalte.Height - S(26 + 46 + 10 + 36)),
             FlatStyle = FlatStyle.Flat,
-            BackColor = Akzent,
-            ForeColor = Color.FromArgb(18, 22, 28),
+            BackColor = akzent,
+            ForeColor = akzentText,
             Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
         };
         ok.FlatAppearance.BorderSize = 0;
-        ok.FlatAppearance.MouseOverBackColor = Color.FromArgb(120, 208, 255);
+        ok.FlatAppearance.MouseOverBackColor = akzentHover;
         var ab = new Button
         {
             Text = T("Abbrechen", "Cancel"),
@@ -310,22 +386,23 @@ internal sealed class DruckDialog : Form
             Size = new Size(fw, S(36)),
             Location = new Point(rand, spalte.Height - S(26 + 36)),
             FlatStyle = FlatStyle.Flat,
-            BackColor = Flaeche,
-            ForeColor = Schrift,
+            BackColor = feld,
+            ForeColor = textFarbe,
             Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
         };
         ab.FlatAppearance.BorderSize = 0;
-        ab.FlatAppearance.MouseOverBackColor = Color.FromArgb(58, 64, 74);
+        ab.FlatAppearance.MouseOverBackColor = hell ? SystemColors.Control : Color.FromArgb(58, 64, 74);
         spalte.Controls.Add(ok); spalte.Controls.Add(ab);
 
+        var trenn = hell ? Color.FromArgb(210, 216, 224) : Color.FromArgb(38, 42, 48);
         spalte.Paint += (_, e) =>
         {
-            using var stift = new Pen(Color.FromArgb(38, 42, 48));
+            using var stift = new Pen(trenn);
             e.Graphics.DrawLine(stift, 0, 0, 0, spalte.Height);
         };
 
         Controls.Add(spalte);
-        return (cb, ra, rk, rb, vn, bs, ko, ok, ab);
+        return (cb, du, sk, ra, rk, rb, vn, bs, ko, pzFeld, pzL, pz, chk, ok, ab);
     }
 
     private Label Caption(string text, ref int y, int rand)
@@ -333,8 +410,8 @@ internal sealed class DruckDialog : Form
         var l = new Label
         {
             Text = text.ToUpper(),
-            Font = FtFett(8.25f),
-            ForeColor = Gedaempft,
+            Font = Ft(8.25f, FontStyle.Bold),
+            ForeColor = muted,
             AutoSize = true,
             Location = new Point(rand, y),
         };
@@ -348,11 +425,11 @@ internal sealed class DruckDialog : Form
         {
             Text = text,
             Font = Ft(10f),
-            ForeColor = Schrift,
+            ForeColor = textFarbe,
             AutoSize = true,
             Location = new Point(rand, y),
         };
-        y += S(32);
+        y += S(30);
         return r;
     }
 
@@ -395,12 +472,11 @@ internal sealed class DruckDialog : Form
         seitenZahl.Text = string.Format(T("Seite {0} / {1}", "Page {0} / {1}"), nr + 1, seiten);
         try
         {
-            // Vorschau in MONITORDPI (geklemmt 96..192) - auf dem 150-%-Notebook
-            // war das 96-dpi-Bild sichtbar unscharf. Das ist der ECHTE Druck-
-            // inhalt (Annotationen/Formulare), nicht die Ansicht-Ebene.
+            // Vorschau in MONITORDPI (geklemmt 96..192), im gewaehlten annots-
+            // Modus - sie zeigt immer den ECHTEN Druckinhalt
             int dpi = Math.Max(96, Math.Min(DeviceDpi, 192));
             var alt = vorschau.Image;
-            vorschau.Image = seiteBild(nr, dpi);
+            vorschau.Image = seiteBild(nr, dpi, mitAnnots.Checked);
             alt?.Dispose();
             vorschauInfo.Text = string.Format(
                 T("Vorschau · Druckauftrag: {0} {1}", "Preview · print job: {0} {1}"),

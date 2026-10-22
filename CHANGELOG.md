@@ -2,6 +2,23 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-22.
 
+## v0.21.27 — Vorschau zoombaren, Skalierung sichtbar, Absturz-Fix
+- Fehlerbehobung (Nutzer-Fund: „kurz die Druckvorschau gesehen, dann hat sich
+  die App beendet"): Die Vorschauseite kam als GDI+-Bild direkt aus dem
+  HTTP-Stream — GDI+ liest solche Bilder träge, der Stream-Puffer konnte aber
+  per Garbage Collector eingeholt werden, und der nächste Malvorgang lief in
+  eine Access Violation. Jetzt liefert der Abruf eine eigenständige Bitmap-
+  Kopie ohne Stream-Abhängigkeit.
+- **Vorschau zoombaren** (Nutzer-Wunsch): Mausrad über der Vorschau zoomt
+  (30–400 %), dazu −/+/„Angepasst"-Knöpfe; Doppelklick setzt die Anpassung
+  zurück. Große Zoomstufen laufen im scrollbaren Bereich.
+- **Skalierung sofort sichtbar** (Nutzer-Wunsch): Die Vorschau zeigt die
+  Seite jetzt **auf dem Blatt komponiert** — exakt wie der Druck sie platziert
+  (Anpassen: in die druckbare Fläche, querlaufende Seiten automatisch gedreht;
+  fester Maßstab: 1:1 zentriert, Überhänge gekappt wie am Papier). Jeder
+  Wechsel der Skalierung (auch benutzerdefiniert %) ist unmittelbar in der
+  Vorschau zu sehen.
+
 ## v0.21.26 — Druckdialog: Duplex, Skalierung, Theme, „ohne Markierungen"
 - Erweiterung nach PDFgear-Vorbild (Nutzer-Wünsche):
   - **Duplex**: Einseitig / Beidseitig – Kante lang / Beidseitig – Kante kurz,

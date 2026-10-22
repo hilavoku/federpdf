@@ -432,7 +432,7 @@ internal static class Program
             Image BildLader(int nr, int dpi, bool annots) => SeiteVomServer(did, nr, dpi, annots);
             var owner = webView.FindForm();
             using var dlg = new DruckDialog(seiten, aktuelleSeite, BildLader, uiSprache,
-                owner?.DeviceDpi ?? 96, uiHell);
+                owner?.DeviceDpi ?? 96, uiHell, masse);
             if (owner != null) dlg.ZentrierenAuf(owner);   // im DPI-Kontext des Owners erstellen
             if (dlg.ShowDialog(owner) != DialogResult.OK)
             {
@@ -500,18 +500,22 @@ internal static class Program
     }
 
     /// <summary>Eine Druckseite vom Server holen (annots=false = pures Papier
-    /// ohne Signaturen/Markierungen/Formulare). Der MemoryStream bleibt
-    /// absichtlich offen: GDI+ liest das Bild traege aus dem Stream.</summary>
+    /// ohne Signaturen/Markierungen/Formulare). Zurueck kommt eine KOPIE als
+    /// eigenstaendiges Bitmap: GDI+ liest Image.FromStream traege aus dem
+    /// Stream - der lokale MemoryStream waere per GC einholbar und der Puffer
+    /// beim naechsten Malvorgang weg -> AccessViolation, App-Absturz
+    /// (Nutzer-Fund 22.10.: "kurz Vorschau gesehen, dann beendet").</summary>
     private static Image SeiteVomServer(string did, int nr, int dpi, bool annots)
     {
         using var http = new HttpClient(new System.Net.Http.HttpClientHandler { UseProxy = false })
         { Timeout = TimeSpan.FromSeconds(30) };
         using var antwort = http.GetStreamAsync(
             $"http://127.0.0.1:{port}/api/druckseite/{did}?nr={nr}&dpi={dpi}&annots={(annots ? 1 : 0)}").Result;
-        var ms = new MemoryStream();
+        using var ms = new MemoryStream();
         antwort.CopyTo(ms);
         ms.Position = 0;
-        return System.Drawing.Image.FromStream(ms);
+        using var roh = System.Drawing.Image.FromStream(ms);
+        return new Bitmap(roh);
     }
 
     private static async Task Melden(WebView2 webView, string wert)

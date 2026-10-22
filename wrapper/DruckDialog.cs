@@ -1,18 +1,18 @@
+using System.Drawing.Drawing2D;
 using System.Drawing.Printing;
 using System.Runtime.InteropServices;
 
 namespace FederPDF;
 
-/// <summary>Druckdialog im PDFgear-Stil: GROSSE Seitenvorschau links
-/// (blätterbar, aus dem echten Druckinhalt), Einstellungsspalte rechts mit
-/// Drucker, Kopien, Seitenbereich, "Signaturen/Markierungen/Formulare drucken"
-/// (Nutzer-Wunsch: auch OHNE druckbar), Duplex und Skalierung (Nutzer-Wunsch
-/// nach PDFgear-Vorbild). Folgt dem App-Theme (hell/dunkel, Farben aus der
-/// Web-UI). Rahmenlos wie das Hauptfenster (eigene Titelzeile, DWM-Rundung).
-/// DPI: KEIN WinForms-AutoScale (erstellte den Dialog im Owner-DPI-Kontext und
-/// reskalierte ihn bei DPI-Wechsel physisch, 144→96 = 2/3, Mess-Fund
-/// 22.10.2026) — stattdessen wird das Layout mit dem Owner-DPI-Faktor gebaut
-/// und das Fenster per StartPosition.Manual direkt am Zielort erstellt.</summary>
+/// <summary>Druckdialog im PDFgear-Stil: GROSSE, ZOOMBARE Seitenvorschau links
+/// (Mausrad/Zoomknöpfe; die Seite wird auf dem Blatt komponiert, exakt wie der
+/// Druck sie platziert - Skalierungswechsel sofort sichtbar), Einstellungs-
+/// spalte rechts mit Drucker, Kopien, Seitenbereich, "Signaturen/Markierungen/
+/// Formulare drucken" (auch OHNE druckbar), Duplex und Skalierung. Folgt dem
+/// App-Theme (hell/dunkel aus der Web-UI-Palette). Rahmenlos wie das Haupt-
+/// fenster. DPI: KEIN WinForms-AutoScale (reskalierte den Dialog bei DPI-
+/// Wechsel physisch, 144→96 = 2/3, Mess-Fund 22.10.2026) - Layout wird mit
+/// dem Owner-DPI-Faktor gebaut, StartPosition.Manual direkt am Zielort.</summary>
 internal sealed class DruckDialog : Form
 {
     private readonly int seiten;
@@ -21,20 +21,23 @@ internal sealed class DruckDialog : Form
     private readonly string spr;
     private readonly int startSeite;             // 1-basiert, aus der UI
     private readonly float f;                    // DPI-Faktor (dpi/96), s. S()
+    private readonly double[][] masse;           // Seitenmasse in pt [b,h] je Seite
 
     // Theme-Paletten (Farben aus der Web-UI: body / body.light)
     private readonly bool hell;
     private readonly Color bg, spalteFarbe, feld, papier, textFarbe, muted, akzent, akzentText, akzentHover;
 
+    private readonly Panel zpanel;
     private readonly PictureBox vorschau;
     private readonly ComboBox drucker, duplex, skalierung;
     private readonly RadioButton alles, aktuelle, bereich;
     private readonly NumericUpDown von, bis, kopien, prozent;
-    private readonly Button zurueck, weiter, drucken, abbruch;
+    private readonly Button zurueck, weiter, drucken, abbruch, zoomMinus, zoomPlus, zoomPassend;
     private readonly CheckBox mitAnnots;
-    private readonly Label seitenZahl, vorschauInfo, prozentLabel;
+    private readonly Label seitenZahl, vorschauInfo, zoomLabel;
     private readonly Panel prozentZeile;
     private int vorschauPos;                     // Index in auftrag
+    private double zoomF = 0;                    // 0 = eingepasst, sonst Faktor
 
     private string T(string de, string en) => spr == "en" ? en : de;
     private int S(float v) => (int)Math.Round(v * f);
@@ -60,9 +63,10 @@ internal sealed class DruckDialog : Form
     };
 
     /// <param name="dpi">DeviceDpi des Owner-Fensters (Layout-Skalierung).</param>
-    /// <param name="hell">App-Theme (true = helles Design der Web-UI).</param>
+    /// <param name="hellF">App-Theme (true = helles Design der Web-UI).</param>
+    /// <param name="seitenmasse">Seitenmasse in pt je Seite (fuer die Blatt-Komposition).</param>
     public DruckDialog(int seitenAnzahl, int aktuelleSeite, Func<int, int, bool, Image> bildLader,
-                       string uiSprache, int dpi, bool hell)
+                       string uiSprache, int dpi, bool hellF, double[][] seitenmasse)
     {
         seiten = seitenAnzahl;
         seiteBild = bildLader;
@@ -70,10 +74,11 @@ internal sealed class DruckDialog : Form
         startSeite = Math.Max(1, Math.Min(aktuelleSeite, seiten));
         auftrag = new List<int>();
         f = Math.Max(1, dpi) / 96f;
+        masse = seitenmasse;
+        hell = hellF;
 
         if (hell)
         {
-            this.hell = true;
             bg = Color.FromArgb(238, 241, 245);        // --bg #eef1f5
             spalteFarbe = Color.FromArgb(230, 234, 240);
             feld = Color.White;                        // --chrome
@@ -107,8 +112,9 @@ internal sealed class DruckDialog : Form
         ClientSize = new Size(S(1080), S(760));
 
         TitelzeileBauen();
-        (vorschau, zurueck, weiter, seitenZahl, vorschauInfo) = VorschauBauen();
-        (drucker, duplex, skalierung, alles, aktuelle, bereich, von, bis, kopien, prozent, prozentLabel,
+        (zpanel, vorschau, zurueck, weiter, seitenZahl, vorschauInfo,
+         zoomMinus, zoomPlus, zoomPassend, zoomLabel) = VorschauBauen();
+        (drucker, duplex, skalierung, alles, aktuelle, bereich, von, bis, kopien, prozent,
          prozentZeile, mitAnnots, drucken, abbruch) = SpalteBauen();
 
         drucken.Click += (_, _) => { DialogResult = DialogResult.OK; Close(); };
@@ -118,14 +124,25 @@ internal sealed class DruckDialog : Form
         zurueck.Click += (_, _) => Blaettern(-1);
         weiter.Click += (_, _) => Blaettern(1);
         vorschau.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) vorschau.Select(); };
-        vorschau.MouseWheel += (s, e) => { if (auftrag.Count > 1) { Blaettern(e.Delta > 0 ? -1 : 1); ((HandledMouseEventArgs)e).Handled = true; } };
+        // Mausrad ueber der Vorschau = ZOOM (Nutzer-Wunsch "nicht zoombar")
+        zpanel.MouseWheel += VorschauRad;
+        vorschau.MouseWheel += VorschauRad;
+        vorschau.DoubleClick += (_, _) => { zoomF = 0; ZoomAnwenden(); };
+        zoomMinus.Click += (_, _) => ZoomSchritt(-0.15);
+        zoomPlus.Click += (_, _) => ZoomSchritt(0.15);
+        zoomPassend.Click += (_, _) => { zoomF = 0; ZoomAnwenden(); };
         alles.CheckedChanged += (_, _) => AuftragNeu();
         aktuelle.CheckedChanged += (_, _) => AuftragNeu();
         bereich.CheckedChanged += (_, _) => AuftragNeu();
         von.ValueChanged += (_, _) => { if (von.Value > bis.Value) bis.Value = von.Value; AuftragNeu(); };
         bis.ValueChanged += (_, _) => { if (bis.Value < von.Value) von.Value = bis.Value; AuftragNeu(); };
         mitAnnots.CheckedChanged += (_, _) => VorschauZeigen();   // Vorschau = echter Druckinhalt
-        skalierung.SelectedIndexChanged += (_, _) => prozentZeile.Visible = skalierung.SelectedIndex == 2;
+        skalierung.SelectedIndexChanged += (_, _) =>
+        {
+            prozentZeile.Visible = skalierung.SelectedIndex == 2;
+            VorschauZeigen();   // Skalierungswechsel sofort sichtbar (Nutzer-Wunsch)
+        };
+        prozent.ValueChanged += (_, _) => { if (skalierung.SelectedIndex == 2) VorschauZeigen(); };
 
         alles.Checked = true;
         AuftragNeu();
@@ -140,6 +157,18 @@ internal sealed class DruckDialog : Form
         StartPosition = FormStartPosition.Manual;
         Location = new Point(owner.Left + (owner.Width - Width) / 2,
                              Math.Max(owner.Top, owner.Top + (owner.Height - Height) / 2));
+    }
+
+    private void VorschauRad(object? s, MouseEventArgs e)
+    {
+        ZoomSchritt(e.Delta > 0 ? 0.15 : -0.15);
+        if (e is HandledMouseEventArgs h) h.Handled = true;
+    }
+
+    private void ZoomSchritt(double delta)
+    {
+        zoomF = Math.Clamp((zoomF <= 0 ? 1.0 : zoomF) + delta, 0.3, 4.0);
+        ZoomAnwenden();
     }
 
     // ---------------------------------------------------------------- Titelzeile
@@ -186,7 +215,7 @@ internal sealed class DruckDialog : Form
     }
 
     // ---------------------------------------------------------------- Vorschau
-    private (PictureBox, Button, Button, Label, Label) VorschauBauen()
+    private (Panel, PictureBox, Button, Button, Label, Label, Button, Button, Button, Label) VorschauBauen()
     {
         var zone = new Panel
         {
@@ -194,18 +223,37 @@ internal sealed class DruckDialog : Form
             Size = new Size(S(748), ClientSize.Height - S(48)),
             BackColor = papier,
         };
+        // Zoombare Flaeche: AutoScroll-Panel um das Bild
+        var zp = new Panel
+        {
+            AutoScroll = true,
+            Location = new Point(S(44), S(70)),
+            Size = new Size(S(660), S(520)),
+            BackColor = papier,
+        };
         var bild = new PictureBox
         {
             SizeMode = PictureBoxSizeMode.Zoom,
             BackColor = Color.White,
             BorderStyle = BorderStyle.FixedSingle,
-            Location = new Point(S(44), S(76)),
-            Size = new Size(S(660), S(580)),
+            Dock = DockStyle.Fill,
         };
-        zone.Controls.Add(bild);
+        zp.Controls.Add(bild);
+        zp.Resize += (_, _) => ZoomAnwenden();
+        zone.Controls.Add(zp);
 
-        var zr = new Button { Text = "\u2039", Font = Ft(15f), Size = new Size(S(44), S(34)), Location = new Point(S(308), ClientSize.Height - S(78)), FlatStyle = FlatStyle.Flat, BackColor = papier, ForeColor = textFarbe };
-        var zv = new Button { Text = "\u203A", Font = Ft(15f), Size = new Size(S(44), S(34)), Location = new Point(S(396), ClientSize.Height - S(78)), FlatStyle = FlatStyle.Flat, BackColor = papier, ForeColor = textFarbe };
+        Button Nav(string t, int x) => new()
+        {
+            Text = t,
+            Font = Ft(15f),
+            Size = new Size(S(44), S(34)),
+            Location = new Point(S(x), ClientSize.Height - S(78)),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = papier,
+            ForeColor = textFarbe,
+        };
+        var zr = Nav("\u2039", 290);
+        var zv = Nav("\u203A", 410);
         zr.FlatAppearance.BorderSize = 0; zv.FlatAppearance.BorderSize = 0;
         zr.FlatAppearance.MouseOverBackColor = feld; zv.FlatAppearance.MouseOverBackColor = feld;
 
@@ -215,9 +263,36 @@ internal sealed class DruckDialog : Form
             Font = Ft(10.5f),
             ForeColor = textFarbe,
             TextAlign = ContentAlignment.MiddleCenter,
-            Size = new Size(S(84), S(34)),
-            Location = new Point(S(332), ClientSize.Height - S(74)),
+            Size = new Size(S(110), S(34)),
+            Location = new Point(S(317), ClientSize.Height - S(74)),
         };
+
+        // Zoom-Gruppe rechts in der Fusszeile der Vorschau
+        Button Zoomk(string t, int x) => new()
+        {
+            Text = t,
+            Font = Ft(11f),
+            Size = new Size(S(36), S(30)),
+            Location = new Point(S(x), ClientSize.Height - S(76)),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = papier,
+            ForeColor = textFarbe,
+        };
+        var zm = Zoomk("\u2212", 500);   // −
+        var zp2 = Zoomk("+", 628);
+        var zf = Zoomk("\u2922", 670);   // Anpassen-Symbol
+        zm.FlatAppearance.BorderSize = 0; zp2.FlatAppearance.BorderSize = 0; zf.FlatAppearance.BorderSize = 0;
+        zm.FlatAppearance.MouseOverBackColor = feld; zp2.FlatAppearance.MouseOverBackColor = feld; zf.FlatAppearance.MouseOverBackColor = feld;
+        var zl = new Label
+        {
+            Text = T("Angepasst", "Fit"),
+            Font = Ft(9.5f),
+            ForeColor = muted,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Size = new Size(S(88), S(30)),
+            Location = new Point(S(538), ClientSize.Height - S(73)),
+        };
+
         var info = new Label
         {
             Text = "",
@@ -227,14 +302,17 @@ internal sealed class DruckDialog : Form
             Size = new Size(S(500), S(20)),
             Location = new Point(S(124), ClientSize.Height - S(40)),
         };
-        zone.Controls.Add(zr); zone.Controls.Add(zv); zone.Controls.Add(zahl); zone.Controls.Add(info);
+        zone.Controls.Add(zr); zone.Controls.Add(zv); zone.Controls.Add(zahl);
+        zone.Controls.Add(zm); zone.Controls.Add(zp2); zone.Controls.Add(zf); zone.Controls.Add(zl);
+        zone.Controls.Add(info);
         Controls.Add(zone);
-        return (bild, zr, zv, zahl, info);
+        return (zp, bild, zr, zv, zahl, info, zm, zp2, zf, zl);
     }
 
     // ---------------------------------------------------------------- Spalte rechts
     private (ComboBox, ComboBox, ComboBox, RadioButton, RadioButton, RadioButton,
-             NumericUpDown, NumericUpDown, NumericUpDown, NumericUpDown, Label, Panel, CheckBox, Button, Button) SpalteBauen()
+             NumericUpDown, NumericUpDown, NumericUpDown, NumericUpDown,
+             Panel, CheckBox, Button, Button) SpalteBauen()
     {
         int rand = S(26), fw = S(332) - rand * 2;
         var spalte = new Panel
@@ -402,7 +480,7 @@ internal sealed class DruckDialog : Form
         };
 
         Controls.Add(spalte);
-        return (cb, du, sk, ra, rk, rb, vn, bs, ko, pzFeld, pzL, pz, chk, ok, ab);
+        return (cb, du, sk, ra, rk, rb, vn, bs, ko, pzFeld, pz, chk, ok, ab);
     }
 
     private Label Caption(string text, ref int y, int rand)
@@ -457,6 +535,50 @@ internal sealed class DruckDialog : Form
         VorschauZeigen();
     }
 
+    /// <summary>Seite auf ein A4-Blatt komponieren, GENAU wie der Druck sie
+    /// platziert: Anpassen = in die druckbare Flaeche (querlaufende Seiten
+    /// automatisch 90 Grad gedreht), fester Faktor = 1:1-Massstab zentriert,
+    /// Ueberhaenge clippt das Blatt wie der Treiber das Papier. So ist jeder
+    /// Skalierungswechsel sofort sichtbar (Nutzer-Wunsch).</summary>
+    private Image PapierAnsicht(Image seite, double bPt, double hPt)
+    {
+        const double blattB = 595.0, blattH = 842.0;   // Blattmodell A4 hoch
+        const double randPt = 18.0;                    // uebliche druckbare Raender
+        int bh = 1500;
+        int bb = (int)Math.Round(blattB / blattH * bh);
+        var blatt = new Bitmap(bb, bh);
+        using var g = Graphics.FromImage(blatt);
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        g.Clear(Color.White);
+
+        bool fit = skalierung.SelectedIndex == 0;
+        bool drehen = fit && bPt > hPt;                // Blatt hoch: quer -> drehen
+        double b = drehen ? hPt : bPt, h = drehen ? bPt : hPt;
+        double s = fit ? Math.Min((blattB - 2 * randPt) / b, (blattH - 2 * randPt) / h) : Skalierung;
+        double wPt = b * s, hPt2 = h * s;
+        double px = bb / blattB;
+        var ziel = new RectangleF(
+            (float)((blattB / 2 - wPt / 2) * px), (float)((blattH / 2 - hPt2 / 2) * px),
+            (float)(wPt * px), (float)(hPt2 * px));
+        if (drehen)
+        {
+            using var gedreht = new Bitmap(seite);
+            gedreht.RotateFlip(RotateFlipType.Rotate270FlipNone);
+            g.DrawImage(gedreht, ziel);
+        }
+        else
+        {
+            g.DrawImage(seite, ziel);
+        }
+        // Seitenkontur: weiße Seiten waeren auf weißem Blatt unsichtbar - die
+        // dezente Umrandung macht den Skalierungseffekt immer sichtbar. Nach
+        // INNEN versetzt: bei 100 % deckt die Seite das Blatt exakt, ein
+        // randlicher Stift waere halb geclippt (6 px Komposit ~ 2 px Schirm).
+        using var kontur = new Pen(Color.FromArgb(190, 197, 208), 6f);
+        g.DrawRectangle(kontur, ziel.X + 3, ziel.Y + 3, ziel.Width - 6, ziel.Height - 6);
+        return blatt;
+    }
+
     private void VorschauZeigen()
     {
         zurueck.Enabled = vorschauPos > 0;
@@ -472,12 +594,14 @@ internal sealed class DruckDialog : Form
         seitenZahl.Text = string.Format(T("Seite {0} / {1}", "Page {0} / {1}"), nr + 1, seiten);
         try
         {
-            // Vorschau in MONITORDPI (geklemmt 96..192), im gewaehlten annots-
-            // Modus - sie zeigt immer den ECHTEN Druckinhalt
-            int dpi = Math.Max(96, Math.Min(DeviceDpi, 192));
+            // Seite in fixer Vorschau-DPI (150) im gewaehlten annots-Modus,
+            // dann auf das Blatt komponiert - die Vorschau ist der Druck
             var alt = vorschau.Image;
-            vorschau.Image = seiteBild(nr, dpi, mitAnnots.Checked);
+            using var roh = seiteBild(nr, 150, mitAnnots.Checked);
+            double bPt = masse[nr][0], hPt = masse[nr][1];
+            vorschau.Image = PapierAnsicht(roh, bPt, hPt);
             alt?.Dispose();
+            ZoomAnwenden();
             vorschauInfo.Text = string.Format(
                 T("Vorschau · Druckauftrag: {0} {1}", "Preview · print job: {0} {1}"),
                 auftrag.Count, T(auftrag.Count == 1 ? "Seite" : "Seiten", auftrag.Count == 1 ? "page" : "pages"));
@@ -487,6 +611,28 @@ internal sealed class DruckDialog : Form
             vorschau.Image = null;
             vorschauInfo.Text = T("Vorschau nicht möglich: ", "Preview unavailable: ") + ex.Message;
         }
+    }
+
+    private void ZoomAnwenden()
+    {
+        if (vorschau.Image == null) return;
+        if (zoomF <= 0)
+        {
+            vorschau.Dock = DockStyle.Fill;
+            vorschau.SizeMode = PictureBoxSizeMode.Zoom;
+            zoomLabel.Text = T("Angepasst", "Fit");
+            return;
+        }
+        vorschau.Dock = DockStyle.None;
+        vorschau.SizeMode = PictureBoxSizeMode.Zoom;
+        var img = vorschau.Image;
+        double basis = Math.Min((double)zpanel.ClientSize.Width / img.Width,
+                                (double)zpanel.ClientSize.Height / img.Height);
+        double gesamt = basis * zoomF;
+        vorschau.Size = new Size(Math.Max(40, (int)Math.Round(img.Width * gesamt)),
+                                 Math.Max(40, (int)Math.Round(img.Height * gesamt)));
+        vorschau.Location = new Point(0, 0);
+        zoomLabel.Text = Math.Round(zoomF * 100) + " %";
     }
 
     // ---------------------------------------------------------------- Fensterchrom

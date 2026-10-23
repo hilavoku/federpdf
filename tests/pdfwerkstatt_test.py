@@ -1056,6 +1056,46 @@ try:
           r.headers.get("content-type") == "image/png" and pr2[0] > 230 and pr2[1] > 230,
           f"{pr2} @ {k}")
 
+    # ---------- v0.21.29: Doppel-Save-Korruption (Nutzer-Fund 23.10.2026:
+    # PDF nach Signatur + Speichern unlesbar, "Seite 1 von 0", PDFgear liest es) ----------
+    # PyMuPDF 1.28.2: der ZWEITE inkrementelle Save am selben Document schreibt
+    # dem neuen xref einen /Prev-SELBSTverweis - die Kette laeuft im Kreis,
+    # MuPDF sieht 0 Seiten. Der Server oeffnet deshalb nach JEDEM Speichern
+    # neu (der naechste saveIncr ist immer wieder der erste) und heilt
+    # Bestandsdateien beim Oeffnen per xref-Byte-Patch.
+    import re as _re
+    import pymupdf as _pm
+    r = requests.post(f"{BASE}/api/save/{pdid}", timeout=15).json()
+    pdfpfad = r.get("path", "")
+    r = requests.post(f"{BASE}/api/save/{pdid}", timeout=15).json()
+    dd = _pm.open(pdfpfad)
+    doppel_ok = dd.page_count == pd["pages"] and r.get("ok")
+    dseiten = dd.page_count
+    dd.close()
+    check("Doppel-Save: Plattendatei bleibt lesbar (kein /Prev-Selbstverweis)",
+          doppel_ok, f"pages={dseiten}")
+
+    # Korruption gezielt nachbauen (Byte-Ebene, unabhaengig von der Server-
+    # PyMuPDF-Version): /Prev des LETZTEN xref auf dessen eigene Position
+    data = open(pdfpfad, "rb").read()
+    starts = [int(m.group(1)) for m in _re.finditer(rb"startxref\s+(\d+)", data)]
+    block = data[starts[-1]:starts[-1] + 600]
+    pm_ = _re.search(rb"/Prev\s+(\d+)", block)
+    if pm_:
+        a, b = pm_.span(1)
+        open(pdfpfad, "wb").write(data[:starts[-1] + a] + str(starts[-1]).encode()
+                                  + data[starts[-1] + b:])
+        rk = requests.get(f"{BASE}/api/open", params={"q": pdfpfad}, timeout=10).json()
+        check("Korrupte Datei (/Prev-Selbstverweis) beim Oeffnen geheilt",
+              rk.get("pages") == pd["pages"], str(rk.get("pages")))
+        requests.post(f"{BASE}/api/save/{rk['id']}", timeout=15)
+        dd = _pm.open(pdfpfad)
+        check("Nach Speichern ist die Datei dauerhaft geheilt",
+              dd.page_count == pd["pages"], f"pages={dd.page_count}")
+        dd.close()
+    else:
+        check("Korruptions-Nachbau moeglich (letztes xref hat /Prev)", False, "")
+
     # --- Sperrzustand nach Server-Neustart (zweiter Prozess, anderer Port) ---
     PORT2 = PORT + 1
     srv2 = subprocess.Popen([EXE, "--port", str(PORT2)], creationflags=subprocess.CREATE_NO_WINDOW)

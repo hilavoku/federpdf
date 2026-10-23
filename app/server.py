@@ -34,7 +34,7 @@ os.makedirs(SIGN_DIR, exist_ok=True)
 
 app = FastAPI(title="FederPDF")
 
-APP_VERSION = "0.21.28"   # wird im Über-Dialog (Klick auf Logo/FederPDF) angezeigt
+APP_VERSION = "0.21.29"   # wird im Über-Dialog (Klick auf Logo/FederPDF) angezeigt
 
 
 @app.middleware("http")
@@ -176,6 +176,27 @@ def _doc(did: str) -> pymupdf.Document:
     return docs[did]["doc"]
 
 
+def _xref_prev_heilen(data: bytes):
+    """Heilt die saveIncr-Korruption von PyMuPDF 1.28.2 (Nutzer-Fund 23.10.2026:
+    DAK-Widerspruch nach Signatur+Speichern unlesbar, 'Seite 1 von 0'). Der
+    ZWEITE inkrementelle Save am selben Document-Objekt schreibt dem neuen
+    xref-Stream einen /Prev-Wert, der AUF DIE EIGENE Position zeigt; die
+    Kette laeuft damit im Kreis, MuPDF sieht nur noch das letzte Update
+    ('cannot find object in xref (2 0 R)', 0 Seiten) - PDFgear repariert stumm.
+    Heilung: zeigt /Prev des LETZTEN xref-Blocks auf sich selbst, wird es auf
+    den vorletzten startxref-Wert umgebogen. Liefert None, wenn das Muster
+    nicht exakt passt - dann ist die Datei anders kaputt."""
+    starts = [int(m.group(1)) for m in re.finditer(rb"startxref\s+(\d+)", data)]
+    if len(starts) < 2 or starts[-1] == starts[-2]:
+        return None
+    block = data[starts[-1]:starts[-1] + 600]
+    m = re.search(rb"/Prev\s+(\d+)", block)
+    if not m or int(m.group(1)) != starts[-1]:
+        return None
+    a, b = m.span(1)
+    return data[:starts[-1] + a] + str(starts[-2]).encode() + data[starts[-1] + b:]
+
+
 def _open(path: str) -> dict:
     path = os.path.normpath(path)
     if not os.path.isfile(path):
@@ -184,6 +205,18 @@ def _open(path: str) -> dict:
         doc = pymupdf.open(path)
     except Exception as e:
         raise HTTPException(400, "Kann PDF nicht oeffnen: " + str(e))
+    if doc.page_count == 0:
+        # saveIncr-Korruption (siehe _xref_prev_heilen): im RAM heilen und aus
+        # dem Stream oeffnen. Ein Stream-Doc kann nicht inkrementell speichern
+        # - /api/save faellt dann von selbst auf die Vollstaendig-Neuschreibung
+        # zurueck und die Datei ist beim naechsten Speichern dauerhaft geheilt.
+        try:
+            geheilt = _xref_prev_heilen(open(path, "rb").read())
+            if geheilt is not None:
+                doc.close()
+                doc = pymupdf.open(stream=geheilt, filetype="pdf")
+        except Exception:
+            pass
     _txt_ap_auffrischen(doc)   # alte Dateien mit schwarz geratenen Text-APs heilen
     did = uuid.uuid4().hex[:12]
     docs[did] = {"path": path, "doc": doc}
@@ -1265,14 +1298,58 @@ def save(did: str, flatten: int = 0):
         d.bake(widgets=False)
         undo_stacks[did] = []
     path = docs[did]["path"]
-    try:
-        d.saveIncr()
-    except Exception:
+
+    def neu_schreiben(garbage: int):
+        """RAM-Zustand komplett neue Datei schreiben (alter Exception-Fallback
+        mit garbage=3; der Notfallpfad nach saveIncr nutzt garbage=0, damit die
+        Xref-Nummern stabil bleiben und Undo-Referenzen ueberleben)."""
         tmp = path + ".tmp"
-        d.save(tmp, garbage=3, deflate=True)
+        d.save(tmp, garbage=garbage, deflate=True)
         d.close()
         shutil.move(tmp, path)
         docs[did]["doc"] = pymupdf.open(path)
+
+    try:
+        d.saveIncr()
+        # PyMuPDF-1.28.2-Falle (Nutzer-Fund 23.10.2026): ein ZWEITER
+        # inkrementeller Save am selben Document-Objekt schreibt dem neuen
+        # xref einen /Prev-SELBSTverweis - die Datei ist danach unlesbar
+        # (0 Seiten; PDFgear oeffnet sie trotzdem, FederPDF nicht mehr).
+        # Deshalb: (1) nach JEDEM Speichern das Document neu oeffnen - der
+        # naechste saveIncr ist immer wieder der erste; (2) die Plattendatei
+        # verifizieren und im Korruptionsfall die xref-Kette heilen bzw. aus
+        # dem RAM neu schreiben (der RAM ist die Wahrheit).
+        seiten_ram = d.page_count
+        try:
+            frisch = pymupdf.open(path)
+            platte_seiten = frisch.page_count
+            frisch.close()
+            if platte_seiten != seiten_ram:
+                raise ValueError("Plattendatei hat %d statt %d Seiten" %
+                                 (platte_seiten, seiten_ram))
+        except Exception:
+            try:
+                geheilt = _xref_prev_heilen(open(path, "rb").read())
+                if geheilt is None:
+                    raise ValueError("xref-Kette nicht heilbar")
+                frisch = pymupdf.open(stream=geheilt, filetype="pdf")
+                strom_seiten = frisch.page_count
+                frisch.close()
+                if strom_seiten != seiten_ram:
+                    raise ValueError("geheilte Datei hat falsche Seitenzahl")
+                heil_tmp = path + ".heal"
+                with open(heil_tmp, "wb") as f:
+                    f.write(geheilt)   # Datei dauerhaft heilen
+                d.close()
+                shutil.move(heil_tmp, path)
+                docs[did]["doc"] = pymupdf.open(path)
+            except Exception:
+                neu_schreiben(0)
+        else:
+            d.close()
+            docs[did]["doc"] = pymupdf.open(path)
+    except Exception:
+        neu_schreiben(3)
     return {"ok": True, "path": path, "flattened": bool(flatten), "seiten": seiten}
 
 

@@ -1319,6 +1319,13 @@ function updateMarked() { const c = document.getElementById('markCount'); if (c)
 /* ---------- Dokument ---------- */
 function openDoc(info) {
   cur = info;
+  // Neues Dokument = deterministische Standardansicht: der letzte Zoom-Stand
+  // des VORHERIGEN Dokuments (bis 400 % vom Detailllesen, oder 20 % vom
+  // Riesen-Scan-Fit) darf nicht uebernommen werden - sonst zeigt ein
+  // normales A4 nur noch einen Bildschirmausschnitt (Nutzer-Fund
+  // 23.10.2026, "nur ca. 1/6 der Seite").
+  zoom = 1;
+  document.getElementById('zoomLabel').textContent = '100 %';
   hits = []; hitIdx = -1; document.getElementById('hitInfo').textContent = '';
   document.getElementById('saveBtn').disabled = false;
   ['saveAsBtn', 'prBtn'].forEach(id => document.getElementById(id).disabled = false);
@@ -1352,11 +1359,16 @@ function openDoc(info) {
   // Sichtraum (Faktor 2), wird eingepaßt; normale Dokumente bleiben bei 100 %.
   const erstesImg = v.querySelector('.pagewrap img');
   const riesigEinpassen = (im) => {
+    // Guard: Im Layout-Übergang (Fensterstart/DPI-Wechsel) kann der Viewer
+    // kurz stauchschmal sein - dann ist jede Fit-Rechnung Unsinn (negativer
+    // Spielraum klemmt z. B. auf die Untergrenze). Erst ab belastbarer Breite.
+    if (document.getElementById('viewer').clientWidth < 200) return;
     const breite100 = im.dataset.pageW ? parseFloat(im.dataset.pageW) * 96 / 72 : im.naturalWidth;
     if (breite100 > document.getElementById('viewer').clientWidth * 2) fitWidth();
   };
   if (erstesImg && erstesImg.complete && erstesImg.naturalWidth) riesigEinpassen(erstesImg);
   else if (erstesImg) erstesImg.addEventListener('load', () => riesigEinpassen(erstesImg), { once: true });
+  zoomModusAktualisieren();   // Fussleisten-Faerbung auf 1:1 (neues Dokument)
 }
 function makePageEl(n) {
   const wrap = document.createElement('div');

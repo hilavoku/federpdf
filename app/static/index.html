@@ -1325,6 +1325,7 @@ function openDoc(info) {
   // normales A4 nur noch einen Bildschirmausschnitt (Nutzer-Fund
   // 23.10.2026, "nur ca. 1/6 der Seite").
   zoom = 1;
+  fitModus = null;   // Einpass-Follow gilt nicht fuer das frisch geoeffnete Dokument
   document.getElementById('zoomLabel').textContent = '100 %';
   hits = []; hitIdx = -1; document.getElementById('hitInfo').textContent = '';
   document.getElementById('saveBtn').disabled = false;
@@ -1525,14 +1526,21 @@ function zoomFocus(x, y) {
 }
 
 function zoomStep(d) {
+  fitModus = null;   // freier Rad-Zoom loest den Einpass-Modus
   const r = document.getElementById('viewer').getBoundingClientRect();
   applyZoom(zoom * (d > 0 ? 1.15 : 1 / 1.15), zoomFocus(r.left + r.width / 2, r.top + r.height / 2));
 }
+
+/* Aktiver Einpass-Modus als ZUSTAND (nicht aus der Färbung abgeleitet -
+   die ~2 %-Toleranz nähme ihn bei jeder Massanderung weg): 'breite'/'seite'
+   folgt der Fenstergröße, Rad-Zoom/1:1 lösen den Modus. */
+let fitModus = null;
 
 function fitWidth() {
   if (!cur) return;
   const img = document.querySelector('.pagewrap img');
   if (!img || (!img.dataset.pageW && !img.naturalWidth)) return;   // Seite noch nicht geladen: nichts einpassen (frueher rechnete das 0-Breite zu 400%-Muell)
+  fitModus = 'breite';
   const avail = document.getElementById('viewer').clientWidth - 44;
   let pageWpt = 595;
   if (img && img.dataset.pageW) pageWpt = parseFloat(img.dataset.pageW);
@@ -1546,6 +1554,7 @@ function fitSeite() {
   if (!cur) return;
   const img = document.querySelector('.pagewrap img');
   if (!img || !img.dataset.pageW) return;
+  fitModus = 'seite';
   const v = document.getElementById('viewer');
   const pw = parseFloat(img.dataset.pageW), ph = parseFloat(img.dataset.pageH || img.dataset.pageW);
   const z = Math.min((v.clientWidth - 44) / (pw * BASE_DPI / 72), (v.clientHeight - 56) / (ph * BASE_DPI / 72));
@@ -1555,6 +1564,7 @@ function fitSeite() {
 
 function zoom100() {
   if (!cur) return;
+  fitModus = null;
   const r = document.getElementById('viewer').getBoundingClientRect();
   applyZoom(1, zoomFocus(r.left + r.width / 2, r.top + r.height / 2));
 }
@@ -1580,7 +1590,23 @@ function zoomModusAktualisieren() {
   document.getElementById('fitBreiteBtn').classList.toggle('fitaktiv', naeher(fitZoomWert(false)));
   document.getElementById('zoom100Btn').classList.toggle('fitaktiv', Math.abs(zoom - 1) < 0.02);
 }
-window.addEventListener('resize', zoomModusAktualisieren);
+
+/* Fenster aendern: Ein aktiver Einpass-Modus (Breite/Seite) folgt dem Fenster -
+   die Seite fuellt den Sichtraum weiter, der sichtbare Bereich skaliert mit
+   (Nutzer-Wunsch 23.10.2026). 1:1 und freier Rad-Zoom bleiben bewusst fix
+   (tatsaechliche Groesse). Modus aus dem ZUSTAND (fitModus), nicht aus der
+   Färbung: die ~2 %-Toleranz nähme ihn mitten in der Event-Serie weg, dann
+   debouncen Folge-Events nicht mehr und der Früh-Timer rechnet mit
+   Übergangsmaßen (IAB-Fund: 42 % -> 68 % statt 105 % nach dem Sprung). */
+let fitFollowTimer = null;
+window.addEventListener('resize', () => {
+  zoomModusAktualisieren();
+  if (!fitModus || !cur) return;
+  if (fitFollowTimer) clearTimeout(fitFollowTimer);
+  fitFollowTimer = setTimeout(() => {
+    (fitModus === 'seite' ? fitSeite : fitWidth)();
+  }, 120);
+});
 
 function scheduleRerender() {
   clearTimeout(rerenderTimer);
@@ -1630,6 +1656,7 @@ function loadFresh(n, img, dpi) {
 document.getElementById('viewer').addEventListener('wheel', (ev) => {
   if (ev.ctrlKey) {
     ev.preventDefault();
+    fitModus = null;   // freier Rad-Zoom loest den Einpass-Modus
     applyZoom(zoom * (ev.deltaY < 0 ? 1.15 : 1 / 1.15), zoomFocus(ev.clientX, ev.clientY));
   }
 }, {passive:false});

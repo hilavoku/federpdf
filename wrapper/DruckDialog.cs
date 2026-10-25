@@ -287,20 +287,26 @@ internal sealed class DruckDialog : Form
         var bild = new PictureBox
         {
             SizeMode = PictureBoxSizeMode.Zoom,
-            BackColor = Color.White,
-            BorderStyle = BorderStyle.FixedSingle,
+            // Blatt + Schatten kommen im KOMPOSIT (transparenter Grund) - der
+            // Rahmen hier waere ein zweiter Kasten ums Blatt (Nutzer-Fund:
+            // "muesste eine DIN-A4-Seite sehen" wie bei PDFgear)
+            BackColor = papier,
+            BorderStyle = BorderStyle.None,
             Dock = DockStyle.Fill,
         };
         zp.Controls.Add(bild);
         zp.Resize += (_, _) => ZoomAnwenden();
         zone.Controls.Add(zp);
 
+        // Fusszeile: Koordinaten ZONEN-relativ! (Frueher Dialog-Koordinaten in
+        // der Zone als Parent - alles sass S(48) zu tief, Seitenzahl/
+        // "Angepasst"/Info waren unten abgeschnitten, Nutzer-Fund 150 %--Notebook)
         Button Nav(string t, int x) => new()
         {
             Text = t,
             Font = Ft(15f),
             Size = new Size(S(44), S(34)),
-            Location = new Point(S(x), ClientSize.Height - S(78)),
+            Location = new Point(S(x), zone.Height - S(78)),
             FlatStyle = FlatStyle.Flat,
             BackColor = papier,
             ForeColor = textFarbe,
@@ -317,7 +323,7 @@ internal sealed class DruckDialog : Form
             ForeColor = textFarbe,
             TextAlign = ContentAlignment.MiddleCenter,
             Size = new Size(S(110), S(34)),
-            Location = new Point(S(317), ClientSize.Height - S(74)),
+            Location = new Point(S(317), zone.Height - S(74)),
         };
 
         // Zoom-Gruppe rechts in der Fusszeile der Vorschau
@@ -326,7 +332,7 @@ internal sealed class DruckDialog : Form
             Text = t,
             Font = Ft(11f),
             Size = new Size(S(36), S(30)),
-            Location = new Point(S(x), ClientSize.Height - S(76)),
+            Location = new Point(S(x), zone.Height - S(76)),
             FlatStyle = FlatStyle.Flat,
             BackColor = papier,
             ForeColor = textFarbe,
@@ -343,7 +349,7 @@ internal sealed class DruckDialog : Form
             ForeColor = muted,
             TextAlign = ContentAlignment.MiddleCenter,
             Size = new Size(S(88), S(30)),
-            Location = new Point(S(538), ClientSize.Height - S(73)),
+            Location = new Point(S(538), zone.Height - S(73)),
         };
 
         var info = new Label
@@ -353,7 +359,7 @@ internal sealed class DruckDialog : Form
             ForeColor = muted,
             TextAlign = ContentAlignment.MiddleCenter,
             Size = new Size(S(500), S(20)),
-            Location = new Point(S(124), ClientSize.Height - S(40)),
+            Location = new Point(S(124), zone.Height - S(40)),
         };
         zone.Controls.Add(zr); zone.Controls.Add(zv); zone.Controls.Add(zahl);
         zone.Controls.Add(zm); zone.Controls.Add(zp2); zone.Controls.Add(zf); zone.Controls.Add(zl);
@@ -591,18 +597,30 @@ internal sealed class DruckDialog : Form
     /// <summary>Seite auf ein A4-Blatt komponieren, GENAU wie der Druck sie
     /// platziert: Anpassen = in die druckbare Flaeche (querlaufende Seiten
     /// automatisch 90 Grad gedreht), fester Faktor = 1:1-Massstab zentriert,
-    /// Ueberhaenge clippt das Blatt wie der Treiber das Papier. So ist jeder
-    /// Skalierungswechsel sofort sichtbar (Nutzer-Wunsch).</summary>
+    /// Ueberhaenge clippt das Blatt wie der Treiber das Papier. Das Blatt
+    /// steht mit Schatten und Rand auf TRANSPARENTEM Grund - die graue Zone
+    /// scheint durch, man sieht das Blatt wie bei PDFgear (Nutzer-Wunsch).</summary>
     private Image PapierAnsicht(Image seite, double bPt, double hPt)
     {
         const double blattB = 595.0, blattH = 842.0;   // Blattmodell A4 hoch
         const double randPt = 18.0;                    // uebliche druckbare Raender
-        int bh = 1500;
+        int bh = 1600;
         int bb = (int)Math.Round(blattB / blattH * bh);
-        var blatt = new Bitmap(bb, bh);
-        using var g = Graphics.FromImage(blatt);
+        int sch = (int)Math.Round(bh * 0.014);         // Schattenwurf ~ Reserve
+        var img = new Bitmap(bb + 2 * sch, bh + 2 * sch, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using var g = Graphics.FromImage(img);
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-        g.Clear(Color.White);
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.Clear(Color.Transparent);
+
+        var blatt = new Rectangle(sch, sch, bb, bh);
+        // Schatten: zwei weich gestaffelte Lagen unter dem Blatt
+        using (var s1 = new SolidBrush(Color.FromArgb(26, 0, 0, 0)))
+            g.FillRectangle(s1, blatt.X + sch, blatt.Y + sch, bb, bh);
+        using (var s2 = new SolidBrush(Color.FromArgb(48, 0, 0, 0)))
+            g.FillRectangle(s2, blatt.X + sch / 2, blatt.Y + sch / 2, bb, bh);
+        // Blatt
+        g.FillRectangle(Brushes.White, blatt);
 
         bool fit = skalierung.SelectedIndex == 0;
         bool drehen = fit && bPt > hPt;                // Blatt hoch: quer -> drehen
@@ -611,7 +629,7 @@ internal sealed class DruckDialog : Form
         double wPt = b * s, hPt2 = h * s;
         double px = bb / blattB;
         var ziel = new RectangleF(
-            (float)((blattB / 2 - wPt / 2) * px), (float)((blattH / 2 - hPt2 / 2) * px),
+            blatt.X + (float)((blattB / 2 - wPt / 2) * px), blatt.Y + (float)((blattH / 2 - hPt2 / 2) * px),
             (float)(wPt * px), (float)(hPt2 * px));
         if (drehen)
         {
@@ -625,11 +643,13 @@ internal sealed class DruckDialog : Form
         }
         // Seitenkontur: weiße Seiten waeren auf weißem Blatt unsichtbar - die
         // dezente Umrandung macht den Skalierungseffekt immer sichtbar. Nach
-        // INNEN versetzt: bei 100 % deckt die Seite das Blatt exakt, ein
-        // randlicher Stift waere halb geclippt (6 px Komposit ~ 2 px Schirm).
-        using var kontur = new Pen(Color.FromArgb(190, 197, 208), 6f);
-        g.DrawRectangle(kontur, ziel.X + 3, ziel.Y + 3, ziel.Width - 6, ziel.Height - 6);
-        return blatt;
+        // INNEN versetzt: bei 100 % deckt die Seite das Blatt exakt.
+        using (var kontur = new Pen(Color.FromArgb(190, 197, 208), 6f))
+            g.DrawRectangle(kontur, ziel.X + 3, ziel.Y + 3, ziel.Width - 6, ziel.Height - 6);
+        // Blattrand
+        using (var rand = new Pen(hell ? Color.FromArgb(205, 210, 219) : Color.FromArgb(82, 88, 98)))
+            g.DrawRectangle(rand, blatt.X, blatt.Y, bb, bh);
+        return img;
     }
 
     /// <summary>Labels sofort aktualisieren und das Laden des Vorschaubilds
@@ -664,10 +684,11 @@ internal sealed class DruckDialog : Form
         int nr = auftrag[vorschauPos];
         try
         {
-            // Seite in fixer Vorschau-DPI (150) im gewaehlten annots-Modus,
-            // dann auf das Blatt komponiert - die Vorschau ist der Druck
+            // Seite in fixer Vorschau-DPI (200 - auf 150-%-Monitoren war 150
+            // sichtbar koernig) im gewaehlten annots-Modus, dann auf das
+            // Blatt komponiert - die Vorschau ist der Druck
             var alt = vorschau.Image;
-            using var roh = seiteBild(nr, 150, mitAnnots.Checked);
+            using var roh = seiteBild(nr, 200, mitAnnots.Checked);
             double bPt = masse[nr][0], hPt = masse[nr][1];
             vorschau.Image = PapierAnsicht(roh, bPt, hPt);
             alt?.Dispose();

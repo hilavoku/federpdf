@@ -1,6 +1,36 @@
 # FederPDF — Changelog
 
-Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-22.
+Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-25.
+
+## v0.21.32 — Vorschau: klares DIN-A4-Blatt, Fußzeile vollständig sichtbar
+- Fehlerbehobung (Nutzer-Fund auf dem 150-%-Notebook-Display): Seitenanzeige
+  („Seite x / y"), Zoom-Status („Angepasst") und die Info-Zeile unten waren
+  abgeschnitten — die Fußzeilen-Elemente waren in Dialog-Koordinaten innerhalb
+  der Vorschau-Zone platziert und saßen dadurch durchgängig 48 px zu tief.
+  Jetzt zonen-relativ, alles vollständig sichtbar.
+- **Vorschau zeigt das DIN-A4-Blatt klar** (Nutzer-Wunsch nach PDFgear-Vorbild):
+  Das Blatt steht mit **Schatten und Rand auf transparentem Grund** — die graue
+  Fläche der Vorschau scheint daneben und dahinter durch, man sieht das Papier
+  als Blatt mit der skalierten Seite darauf (auch bei 50 % Skalierung mit
+  deutlichem weißen Rand). Die Seitenauflösung der Vorschau ist von 150 auf
+  200 dpi erhöht (auf skalierten Displays war 150 sichtbar körnig).
+
+## v0.21.31 — Einpass-Ansicht folgt der Fenstergröße
+- Bei aktivem „Breite"/„Seite"-Zoom wird beim Fenster-Resize neu eingepasst
+  (debounced); „1:1" und freier Rad-Zoom bleiben bewusst fix. (Details im
+  Commit 24e4a93.)
+
+## v0.21.30 — Neues PDF zeigte nur einen Bildschirmausschnitt
+- openDoc übernahm den Zoom des vorherigen Dokuments (bis 400 % oder Mini-
+  Scan-Fit) ungefragt auf das neue Dokument. Jetzt startet jedes neue,
+  normale Dokument deterministisch bei 100 %; Riesen-Scan-Auto-Fit bleibt.
+
+## v0.21.29 — PDF nach Signatur+Speichern unlesbar („Seite 1 von 0")
+- PyMuPDF-Falle: der zweite inkrementelle Save am selben Dokument schreibt
+  einen /Prev-Selbstverweis — die Kette läuft im Kreis, MuPDF sieht 0 Seiten.
+  Fix dreistufig: Document nach jedem saveIncr neu öffnen, /Prev-Kette auf
+  Byteebene heilen, Notfall-Neuschreibung; Bestandsdateien heilen beim
+  Öffnen. (Details in AGENTS.md Falle 17.)
 
 ## v0.21.28 — Druckdialog: Seitenbereich-Steuerung und Mausrad geradegerückt
 - Fehlerbehobung (Nutzer-Fund: Pfeil-Klicks im Seitenbereich schienen beim

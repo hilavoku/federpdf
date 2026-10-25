@@ -32,10 +32,15 @@ internal sealed class DruckDialog : Form
     private readonly ComboBox drucker, duplex, skalierung;
     private readonly RadioButton alles, aktuelle, bereich;
     private readonly NumericUpDown von, bis, kopien, prozent;
-    private readonly Button zurueck, weiter, drucken, abbruch, zoomMinus, zoomPlus, zoomPassend;
+    private readonly Button zurueck, weiter, drucken, abbruch, zoomMinus, zoomPlus, zoomPassend, eigenschaften;
     private readonly CheckBox mitAnnots;
     private readonly Label seitenZahl, vorschauInfo, zoomLabel;
     private readonly Panel prozentZeile;
+    // Druckereinstellungen des GEWAEHLTEN Druckers (Namen-only-Anlage, keine
+    // Treiberabfragen). Der "Druckereigenschaften"-Knopf oeffnet den Treiber-
+    // dialog (DocumentProperties/DEVMODE) und wendet die Auswahl HIER an -
+    // Paperformat/Qualitaet/Farbe fliessen so in den Druck (PDFgear-Art).
+    private PrinterSettings druckerEinstellungen = new();
     private int vorschauPos;                     // Index in auftrag
     private double zoomF = 0;                    // 0 = eingepasst, sonst Faktor
     // Vorschau-Debounce: jeder Wertwechsel (Seitenbereich-Pfeile! Skalierung,
@@ -55,6 +60,10 @@ internal sealed class DruckDialog : Form
     public int Kopien => (int)kopien.Value;
     public List<int> SeitenListe => auftrag;
     public bool MitAnnots => mitAnnots.Checked;
+    /// <summary>Einstellungen des gewaehlten Druckers inkl. evtl. im Treiber-
+    /// dialog getroffener Auswahl (Papier/Qualitaet/Farbe) - der Druck läuft
+    /// mit DIESEM Objekt.</summary>
+    public PrinterSettings DruckerEinstellungen => druckerEinstellungen;
     public Duplex DuplexModus => duplex.SelectedIndex switch
     {
         1 => Duplex.Vertical,      // Kante lang
@@ -116,12 +125,12 @@ internal sealed class DruckDialog : Form
         BackColor = bg;
         ForeColor = textFarbe;
         Font = Ft(9.5f);
-        ClientSize = new Size(S(1080), S(760));
+        ClientSize = new Size(S(1080), S(800));
 
         TitelzeileBauen();
         (zpanel, vorschau, zurueck, weiter, seitenZahl, vorschauInfo,
          zoomMinus, zoomPlus, zoomPassend, zoomLabel) = VorschauBauen();
-        (drucker, duplex, skalierung, alles, aktuelle, bereich, von, bis, kopien, prozent,
+        (drucker, eigenschaften, duplex, skalierung, alles, aktuelle, bereich, von, bis, kopien, prozent,
          prozentZeile, mitAnnots, drucken, abbruch) = SpalteBauen();
 
         drucken.Click += (_, _) => { DialogResult = DialogResult.OK; Close(); };
@@ -369,7 +378,7 @@ internal sealed class DruckDialog : Form
     }
 
     // ---------------------------------------------------------------- Spalte rechts
-    private (ComboBox, ComboBox, ComboBox, RadioButton, RadioButton, RadioButton,
+    private (ComboBox, Button, ComboBox, ComboBox, RadioButton, RadioButton, RadioButton,
              NumericUpDown, NumericUpDown, NumericUpDown, NumericUpDown,
              Panel, CheckBox, Button, Button) SpalteBauen()
     {
@@ -407,7 +416,35 @@ internal sealed class DruckDialog : Form
         }
         catch { }
         spalte.Controls.Add(cb);
-        y += S(34 + 20);
+        // Einstellungen folgen der Auswahl (nur Name - Treiberabfragen erst
+        // beim Eigenschaften-Knopf bzw. im Druck-Background-Task)
+        cb.SelectedIndexChanged += (_, _) =>
+        {
+            if (cb.SelectedItem is string name) druckerEinstellungen = new PrinterSettings { PrinterName = name };
+        };
+        if (cb.SelectedItem is string startName)
+            druckerEinstellungen = new PrinterSettings { PrinterName = startName };
+        y += S(34 + 8);
+
+        // Treiber-Eigenschaften (PDFgear-Art): oeffnet den Dialog des
+        // Druckertreibers (Papier, Qualitaet, Farbe ...) und wendet die
+        // Auswahl auf den Druck an
+        var eg = new Button
+        {
+            Text = T("\u2699  Druckereigenschaften", "\u2699  Printer properties"),
+            Font = Ft(9.5f),
+            Size = new Size(fw, S(30)),
+            Location = new Point(rand, y),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = feld,
+            ForeColor = textFarbe,
+            Cursor = Cursors.Hand,
+        };
+        eg.FlatAppearance.BorderSize = 0;
+        eg.FlatAppearance.MouseOverBackColor = hell ? SystemColors.Control : Color.FromArgb(58, 64, 74);
+        eg.Click += (_, _) => TreiberEigenschaftenZeigen();
+        spalte.Controls.Add(eg);
+        y += S(30 + 16);
 
         spalte.Controls.Add(Caption(T("Kopien", "Copies"), ref y, rand));
         var ko = new NumericUpDown
@@ -539,7 +576,7 @@ internal sealed class DruckDialog : Form
         };
 
         Controls.Add(spalte);
-        return (cb, du, sk, ra, rk, rb, vn, bs, ko, pzFeld, pz, chk, ok, ab);
+        return (cb, eg, du, sk, ra, rk, rb, vn, bs, ko, pzFeld, pz, chk, ok, ab);
     }
 
     private Label Caption(string text, ref int y, int rand)
@@ -726,6 +763,75 @@ internal sealed class DruckDialog : Form
         vorschau.Location = new Point(0, 0);
         zoomLabel.Text = Math.Round(zoomF * 100) + " %";
     }
+
+    // ---------------------------------------------------------------- Treiber-Eigenschaften
+    /// <summary>Oeffnet den Eigenschaften-Dialog des DRUCKERTREIBERS (Papier-
+    /// format, Qualitaet, Farbe ...) und wendet die Auswahl auf die Druck-
+    /// einstellungen an. Abbruch laesst alles unberuehrt. Die dort gesetzte
+    /// Duplex-Option uebernimmt unsere Duplex-Auswahl.</summary>
+    internal void TreiberEigenschaftenZeigen()
+    {
+        string? name = drucker.SelectedItem as string;
+        if (string.IsNullOrEmpty(name)) return;
+        try
+        {
+            IntPtr hDev = druckerEinstellungen.GetHdevmode();
+            IntPtr pDev = GlobalLock(hDev);
+            try
+            {
+                OpenPrinter(name, out var hPrn, IntPtr.Zero);
+                try
+                {
+                    // DM_IN_BUFFER|DM_OUT_BUFFER|DM_IN_PROMPT: bestehende Werte
+                    // vorbelegen, Dialog zeigen, Aenderungen zurueckschreiben
+                    const int mode = 8 | 2 | 4;
+                    if (DocumentProperties(Handle, hPrn, name, pDev, pDev, mode) == 1)   // IDOK
+                    {
+                        druckerEinstellungen.SetHdevmode(hDev);
+                        DuplexComboVonTreiber(druckerEinstellungen.Duplex);
+                    }
+                }
+                finally { if (hPrn != IntPtr.Zero) ClosePrinter(hPrn); }
+            }
+            finally { GlobalUnlock(hDev); GlobalFree(hDev); }
+        }
+        catch
+        {
+            // Treiber ohne Eigenschaften-Dialog/fehlgeschlagener Aufruf:
+            // still uebergehen - der Druck funktioniert weiterhin
+        }
+    }
+
+    /// <summary>Duplex-Auswahl aus Treiber-Einstellungen in unsere Combo
+    /// uebernehmen (intern fuer den kopflosen Test).</summary>
+    internal void DuplexComboVonTreiber(Duplex d)
+    {
+        duplex.SelectedIndex = d switch
+        {
+            Duplex.Vertical => 1,      // Kante lang
+            Duplex.Horizontal => 2,    // Kante kurz
+            _ => 0,
+        };
+    }
+
+    [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool OpenPrinter(string name, out IntPtr hPrinter, IntPtr noh);
+
+    [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool ClosePrinter(IntPtr hPrinter);
+
+    [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int DocumentProperties(IntPtr hwnd, IntPtr hPrinter, string geraet,
+        IntPtr devModeOutput, IntPtr devModeInput, int mode);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GlobalLock(IntPtr h);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool GlobalUnlock(IntPtr h);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool GlobalFree(IntPtr h);
 
     // ---------------------------------------------------------------- Fensterchrom
     private void EckenRunden()

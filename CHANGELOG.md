@@ -2,6 +2,14 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-25.
 
+## v0.21.33 — Druckereigenschaften-Knopf im Druckdialog
+- Neu (Nutzer-Wunsch nach PDFgear-Vorbild): Unter der Druckerliste oeffnet
+  **„Druckereigenschaften"** den Eigenschaften-Dialog des Druckertreibers
+  (Papierformat, Druckqualität, Farbe, eigene Treiberoptionen). Die dort
+  getroffene Auswahl fließt direkt in den Druckauftrag ein; eine im Treiber
+  gewählte Beidseitigkeit übernimmt die Duplex-Auswahl des Dialogs. Abbrechen
+  lässt alles unberührt.
+
 ## v0.21.32 — Vorschau: klares DIN-A4-Blatt, Fußzeile vollständig sichtbar
 - Fehlerbehobung (Nutzer-Fund auf dem 150-%-Notebook-Display): Seitenanzeige
   („Seite x / y"), Zoom-Status („Angepasst") und die Info-Zeile unten waren

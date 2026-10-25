@@ -445,6 +445,10 @@ internal static class Program
             var duplex = dlg.DuplexModus;
             bool mitAnnots = dlg.MitAnnots;
             double skalierung = dlg.Skalierung;
+            // Einstellungen inkl. Treiber-Eigenschaften (Papier/Qualitaet/Farbe
+            // aus dem Druckereigenschaften-Dialog) MITNEHMEN, bevor der Dialog
+            // disposed wird
+            var druckerPs = dlg.DruckerEinstellungen;
             if (liste.Count == 0 || string.IsNullOrEmpty(druckerName))
             {
                 await Melden(webView, "null");
@@ -453,7 +457,7 @@ internal static class Program
 
             await Task.Run(() =>
             {
-                var ps = new PrinterSettings { PrinterName = druckerName };
+                var ps = druckerPs ?? new PrinterSettings { PrinterName = druckerName };
                 ps.Copies = (short)Math.Max(1, Math.Min(kopien, 99));
                 try { ps.Duplex = duplex; } catch { /* Treiber ohne Duplex: einseitig */ }
                 // Render-DPI = Aufloesung des GEWAHLTEN Druckers (geklemmt: 600 dpi

@@ -728,6 +728,12 @@ internal sealed class HauptForm : Form
     /// Oberkante gar nicht greifbar, die Ecken oben nur in der Breite).</summary>
     private int ObengriffPx() => Math.Max(4, (int)Math.Round(6.0 * DeviceDpi / 96.0));
 
+    /// <summary>Hoehe des BEWEGUNGSSTREIFENS unter dem Obergriff (v0.21.35,
+    /// Nutzer-Wunsch "obere Kante auch verschiebbar"): native HTCAPTION-Flaeche
+    /// zum Fensterbewegen direkt an der Kante; der HTML-Kopfzeilen-Zug beginnt
+    /// erst darunter (mit seiner 6-px-Bewegungsschwelle).</summary>
+    private int BewegungsstreifenPx() => Math.Max(4, (int)Math.Round(5.0 * DeviceDpi / 96.0));
+
     // Sichtbares Band in physischen Pixeln: der Trikolore-Streifen (4 px,
     // Nutzer-Wunsch v0.18.11). Das WebView2 reicht bis direkt dahinter.
     private const int BandPx = 4;
@@ -896,6 +902,13 @@ internal sealed class HauptForm : Form
             if (links && oben) { m.Result = (IntPtr)HTTOPLEFT; return; }
             if (rechts && oben) { m.Result = (IntPtr)HTTOPRIGHT; return; }
             if (oben) { m.Result = (IntPtr)HTTOP; return; }
+            // BEWEGUNGSSTREIFEN (v0.21.35, Nutzer-Wunsch "obere Kante auch
+            // verschiebbar"): schmaler Streifen unmittelbar unter dem Ober-
+            // griff - Kante packen & Fenster bewegen, nativ ohne Bewegungs-
+            // schwelle (der HTML-Kopfzeilen-Zug braucht 6 px Anlauf). Liegt
+            // auf dem dekorativen Bandbereich der Kopfzeile, keine HTML-
+            // Interaktion dort. Doppelklick = Maximieren (nativ).
+            if (p.Y <= zoneOben + BewegungsstreifenPx()) { m.Result = (IntPtr)HTCAPTION; return; }
             if (links) { m.Result = (IntPtr)HTLEFT; return; }
             if (rechts) { m.Result = (IntPtr)HTRIGHT; return; }
             if (unten) { m.Result = (IntPtr)HTBOTTOM; return; }

@@ -2,6 +2,14 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
 
+## v0.21.35 — Obere Kante: Fenster auch verschieben
+- Ergänzung (Nutzer-Wunsch): Direkt unter dem Griffrand der Oberkante liegt
+  jetzt ein schmaler **Verschiebe-Streifen** — die Kante packen und das
+  Fenster bewegen, sofort und ohne Anlaufweg (die Kopfzeile als Ziehfläche
+  braucht 6 px Bewegung, bevor sie zieht). Die Größenänderung oben (Höhe und
+  diagonale Ecken) bleibt wie in v0.21.34, Doppelklick auf den Streifen
+  maximiert/stellt wieder her.
+
 ## v0.21.34 — Fenster an der Oberkante und den Ecken oben verstellbar
 - Fehlerbehobung (Nutzer-Fund): Das Fenster ließ sich oben nur in der Breite
   verändern — die obere Kante war gar nicht greifbar (die Oberzone im

@@ -2,6 +2,16 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
 
+## v0.21.37 — Obere Kante: Trikolore-Band wieder bündig
+- Fehlerbehobung (Nutzer-Fund mit Screenshot): Nach der greifbaren Oberkante
+  (v0.21.36) schlossen die seitlichen Trikolore-Bänder nicht mehr bündig mit
+  der oberen Kante ab — das horizontale Band saß 9 px tiefer eingelassen,
+  die Seitenbänder ragten darüber. Jetzt malt der **Wrapper das Trikolore-
+  Band an die ganz oberste Fensterkante** (volle Breite, 3 px wie bisher);
+  das Band der Kopfzeile (CSS) entfiel ersatzlos — es würde sich sonst
+  verdoppeln. Die Ecken schließen wieder sauber, die Griffrand-Pixel der
+  Oberkante bleiben Fenstereigen (v0.21.36 funktional unverändert).
+
 ## v0.21.36 — Obere Kante wirklich greifbar (Eigene Fenster-Pixel)
 - Fehlerbehobung (Nutzer-Fund: „obere Kante nicht zu greifen, um nach oben zu
   vergrößern" — trotz der v0.21.34): Die Trefferzonen für die Größenänderung

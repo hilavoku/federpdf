@@ -180,17 +180,12 @@
   #modePill { position:absolute; top:0; left:0; background:var(--accent-dim); border-radius:8px; z-index:0; opacity:0;
               transition: transform var(--d3) var(--e-standard), width var(--d3) var(--e-standard), opacity var(--d2); pointer-events:none; }
   header { position: relative; }
-  /* Trikolore-Kante oben: EIGENTUEMER der Oberkante ist allein die Kopfzeile
-     (seit v0.21.5 in BEIDEN Designs - der Wrapper malt oben nichts mehr; sein
-     zusaetzliches Band + diese Kante wirkten wie ein dicker Doppelstreifen).
-     Farben identisch zum Wrapper-Rand (links/unten schwarz, Mitte rot, rechts
-     gold) - die Seitenbaender setzen sie nahtlos fort. */
-  header::before { content:""; position:absolute; top:0; left:0; right:0; height:3px;
-    background:linear-gradient(90deg, #1a1a1a, #dd0000 50%, #ffcc00 100%); z-index:4; }
-  /* z-index:4: die Kante muss UEBER der .fensterzone (z-index:3) liegen, sonst
-     reisst sie dort ab - harte Kante an der linken Zonecke, kahlen Ecken
-     (Nutzer-Meldung v0.18.9). Die Knepfe selbst stehen tiefer, der 3px-Streifen
-     ueberlappt nichts Sichtbares. */
+  /* Trikolore-Kante oben: seit v0.21.37 malt der WRAPPER das Band an die
+     GANZ OBERSTE Fensterkante (dort liegen die Griffrand-Eigenpixels, das
+     WebView beginnt erst darunter) - das CSS-Band entfiel, sonst verdoppelt
+     es sich. Farben wie der Wrapper-Rand; die Seitenbaender setzen nahtlos
+     fort, die Ecke schliesst bündig (Nutzer-Fund v0.21.36-Runde). */
+  header::before { content:none; }
   header .tbtn { position: relative; z-index: 1; }
   header .tbtn.active { background: transparent; }   /* die gleitende Pill liefert die Fläche */
   ::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }

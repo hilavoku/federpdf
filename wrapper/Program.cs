@@ -783,12 +783,25 @@ internal sealed class HauptForm : Form
             g.FillRectangle(bi, 0, 0, zone, Height);                       // links
             g.FillRectangle(bi, Width - zone, 0, zone, Height);            // rechts
             g.FillRectangle(bi, 0, Height - zone, Width, zone);            // unten
-            // OBER-STREIFEN (v0.21.36): im Fensterton - unsichtbar unauf-
-            // faellig, macht die Kante zu Eigenpixels des Fensters (der
-            // alte Kamm-ANSCHLUSS entfiel: er waere jetzt voll sichtbar und
-            // verdoppelte das CSS-Band der Kopfzeile, v0.21.5-Falle)
+            // OBER-STREIFEN (v0.21.36): im Fensterton - macht die Kante zu
+            // Eigenpixels des Fensters (NCHITTEST ueber dem WebView greift
+            // nicht, die Maus geht ans Kindfenster)
             g.FillRectangle(bi, 0, 0, Width, oben);                        // oben
         }
+        // Trikolore-KAMM an der GANZ OBERSTEN Kante (v0.21.37): das CSS-Band
+        // der Kopfzeile entfiel (das WebView beginnt erst unterm Griffrand,
+        // ein Band dort erschiene eingelassen und die Ecke schlösse nicht
+        // bündig, Nutzer-Fund) - der Wrapper malt das Band jetzt selbst in
+        // voller Fensterbreite, die Seitenbaender reichen bis y=0 und
+        // schliessen nahtlos an. Hoehe 3px logisch wie das alte CSS-Band.
+        int kanteH = Math.Max(3, (int)Math.Ceiling(3.0 * DeviceDpi / 96.0));
+        var kamm0 = new ColorBlend
+        {
+            Positions = new float[] { 0f, 0.5f, 1f },
+            Colors = new[] { RandSchwarz, RandRot, RandGold }
+        };
+        using (var pk = new LinearGradientBrush(new Rectangle(0, 0, Width, kanteH), RandSchwarz, RandGold, LinearGradientMode.Horizontal))
+        { pk.InterpolationColors = kamm0; g.FillRectangle(pk, 0, 0, Width, kanteH); }
         // Verlaufskamm schwarz - rot - gold wie das CSS-Band (50% Rot). Der
         // Umlauf beginnt/endet an den oberen Ecken mit denselben Farben wie
         // der CSS-Streifen (links schwarz, rechts gold) - nahtloser Ansatz.

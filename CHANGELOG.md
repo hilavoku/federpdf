@@ -2,6 +2,23 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
 
+## v0.21.36 — Obere Kante wirklich greifbar (Eigene Fenster-Pixel)
+- Fehlerbehobung (Nutzer-Fund: „obere Kante nicht zu greifen, um nach oben zu
+  vergrößern" — trotz der v0.21.34): Die Trefferzonen für die Größenänderung
+  lagen oben vollständig **über dem WebView-Feld** — dort geht die Maus an
+  das Eingabefeld, nicht an den Fensterrand; nur Zonen auf Fenstereigenen
+  Pixeln greifen. Links/rechts/unten war das nie sichtbar, weil dort das
+  sichtbare Randband dem Fenster gehört — oben aber lag das WebView
+  randbündig bei 0. Jetzt gehört die obere Kante (ca. 9 px auf 150-%-
+  Displays) dem Fenster selbst: Höhe und diagonale Ecken oben sind real
+  greifbar. Der Streifen ist im Fensterton gehalten, das Trikolore-Band der
+  Kopfzeile bleibt unverändert. Der in v0.21.35 angekündigte Verschiebe-
+  streifen an der Kante lag ebenfalls über dem WebView und entfiel —
+  Verschieben bleibt über die Kopfzeile wie gehabt.
+- Für Tests: Der kopflose Fenster-Test erzeugt kein WebView und sah die
+  Schwäche nicht — er prüft jetzt zusätzlich, dass die oberste Kante aus
+  Fenstereigenen Pixeln besteht (Padding oben ≥ Griffrand).
+
 ## v0.21.35 — Obere Kante: Fenster auch verschieben
 - Ergänzung (Nutzer-Wunsch): Direkt unter dem Griffrand der Oberkante liegt
   jetzt ein schmaler **Verschiebe-Streifen** — die Kante packen und das

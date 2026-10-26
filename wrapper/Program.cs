@@ -725,31 +725,30 @@ internal sealed class HauptForm : Form
     /// <summary>Ober-Greifzone in physischen Pixeln, absichtlich SCHMALER als
     /// die Seiten-Zonen: die Kopfzeile ist die Ziehflaeche zum Verschieben,
     /// nur ihr oberster Streifen wird Griffrand (v0.21.34 - vorher war die
-    /// Oberkante gar nicht greifbar, die Ecken oben nur in der Breite).</summary>
+    /// Oberkante gar nicht greifbar, die Ecken oben nur in der Breite).
+    /// Seit v0.21.36 ist Padding.Top GENAU diese Zone: NCHITTEST ueber dem
+    /// WebView greift nicht (Maus geht ans Kindfenster), deshalb gehoeren
+    /// die Kanten-Pixel dem Fenster selbst.</summary>
     private int ObengriffPx() => Math.Max(4, (int)Math.Round(6.0 * DeviceDpi / 96.0));
-
-    /// <summary>Hoehe des BEWEGUNGSSTREIFENS unter dem Obergriff (v0.21.35,
-    /// Nutzer-Wunsch "obere Kante auch verschiebbar"): native HTCAPTION-Flaeche
-    /// zum Fensterbewegen direkt an der Kante; der HTML-Kopfzeilen-Zug beginnt
-    /// erst darunter (mit seiner 6-px-Bewegungsschwelle).</summary>
-    private int BewegungsstreifenPx() => Math.Max(4, (int)Math.Round(5.0 * DeviceDpi / 96.0));
 
     // Sichtbares Band in physischen Pixeln: der Trikolore-Streifen (4 px,
     // Nutzer-Wunsch v0.18.11). Das WebView2 reicht bis direkt dahinter.
     private const int BandPx = 4;
 
     /// <summary>Band (Padding) je Fensterzustand setzen: maximiert randlos,
-    /// sonst der schmale sichtbare Streifen an SEITEN/UNTEN. OBEN ist 0 und
-    /// der Wrapper malt dort nichts: Eigner der Oberkante ist allein der
-    /// CSS-Streifen der Kopfzeile (v0.21.5) - ein zusaetzliches Wrapper-Band
-    /// darunter wirkte als dicker Doppelstreifen mit Naht-Artefakten. Die
-    /// GROSSE Greifzone lebt nur noch im WM_NCHITTEST (ZiehzonePx).</summary>
+    /// sonst der schmale sichtbare Streifen an SEITEN/UNTEN und OBEN der
+    /// OBERGRIFF (v0.21.36): Eigenpixels fuer die Kante - NCHITTEST-Zonen
+    /// ueber dem WebView greifen NICHT (die Maus geht ans Kindfenster), die
+    /// Oberkante war deshalb trotz HTTOP nicht zu fassen (Nutzer-Fund; der
+    /// kopflose Harness ohne WebView sah den Fehler nicht). Der Streifen
+    /// wird im Fensterton gemalt, das Trikolore-Band der Kopfzeile bleibt
+    /// unveraendert sichtbar.</summary>
     public void RandAnwenden()
     {
         EckenAnwenden();   // Eckenrundung mit dem Zustand mitziehen (normal gerundet, maximiert eckig)
         Padding = WindowState == FormWindowState.Maximized
             ? Padding.Empty
-            : new Padding(BandPx, 0, BandPx, BandPx);
+            : new Padding(BandPx, ObengriffPx(), BandPx, BandPx);
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -771,34 +770,25 @@ internal sealed class HauptForm : Form
     {
         base.OnPaint(e);
         var g = e.Graphics;
-        int zone = Padding.Left;      // Band an den Seiten/unten (oben: 0)
-        if (zone == 0) return;   // maximiert: kein Rand
+        int zone = Padding.Left;      // Band an den Seiten/unten
+        int oben = Padding.Top;       // OBERGRIFF (v0.21.36): Eigenpixels oben
+        if (zone == 0 && oben == 0) return;   // maximiert: kein Rand
         // Der duenne Trikolore-Streifen (4 px, Nutzer-Wunsch v0.18.11) an
         // LINKS/RECHTS/UNTEN - oben liefert die Kopfzeile ihren eigenen
-        // CSS-Streifen (v0.21.5). Das Padding IST seit der v0.21.9-Ergaenzung
-        // nur noch dieser Streifen; die breite Greifzone liegt unsichtbar im
-        // WM_NCHITTEST ueber dem WebView-Rand und wird nicht gemalt.
+        // CSS-Streifen. Die breite Greifzone liegt unsichtbar im WM_NCHITTEST
+        // ueber dem WebView-Rand und wird nicht gemalt.
         int sichtbar = Math.Min(4, zone);
         using (var bi = new SolidBrush(licht ? InnenHell : InnenDunkel))
         {
             g.FillRectangle(bi, 0, 0, zone, Height);                       // links
             g.FillRectangle(bi, Width - zone, 0, zone, Height);            // rechts
             g.FillRectangle(bi, 0, Height - zone, Width, zone);            // unten
+            // OBER-STREIFEN (v0.21.36): im Fensterton - unsichtbar unauf-
+            // faellig, macht die Kante zu Eigenpixels des Fensters (der
+            // alte Kamm-ANSCHLUSS entfiel: er waere jetzt voll sichtbar und
+            // verdoppelte das CSS-Band der Kopfzeile, v0.21.5-Falle)
+            g.FillRectangle(bi, 0, 0, Width, oben);                        // oben
         }
-        // Oberkanten-ANSCHLUSS (Nutzer-Fall: "Rand oben rechts nicht
-        // geschlossen"): der CSS-Streifen endet an der WebView-Kante; dieselbe
-        // Kamm-Flaeche einmal ueber die VOLLE Fensterbreite malen - die Mitte
-        // liegt unterm WebView (unsichtbar), an den Ecken schliesst der
-        // Streifen damit bündig bis zum Fensterrand. Hoehe = CSS 3px in
-        // physischen Pixeln (DeviceDpi).
-        int kanteH = Math.Max(3, (int)Math.Ceiling(3.0 * DeviceDpi / 96.0));
-        var kamm0 = new ColorBlend
-        {
-            Positions = new float[] { 0f, 0.5f, 1f },
-            Colors = new[] { RandSchwarz, RandRot, RandGold }
-        };
-        using (var pk = new LinearGradientBrush(new Rectangle(0, 0, Width, kanteH), RandSchwarz, RandGold, LinearGradientMode.Horizontal))
-        { pk.InterpolationColors = kamm0; g.FillRectangle(pk, 0, 0, Width, kanteH); }
         // Verlaufskamm schwarz - rot - gold wie das CSS-Band (50% Rot). Der
         // Umlauf beginnt/endet an den oberen Ecken mit denselben Farben wie
         // der CSS-Streifen (links schwarz, rechts gold) - nahtloser Ansatz.
@@ -902,13 +892,6 @@ internal sealed class HauptForm : Form
             if (links && oben) { m.Result = (IntPtr)HTTOPLEFT; return; }
             if (rechts && oben) { m.Result = (IntPtr)HTTOPRIGHT; return; }
             if (oben) { m.Result = (IntPtr)HTTOP; return; }
-            // BEWEGUNGSSTREIFEN (v0.21.35, Nutzer-Wunsch "obere Kante auch
-            // verschiebbar"): schmaler Streifen unmittelbar unter dem Ober-
-            // griff - Kante packen & Fenster bewegen, nativ ohne Bewegungs-
-            // schwelle (der HTML-Kopfzeilen-Zug braucht 6 px Anlauf). Liegt
-            // auf dem dekorativen Bandbereich der Kopfzeile, keine HTML-
-            // Interaktion dort. Doppelklick = Maximieren (nativ).
-            if (p.Y <= zoneOben + BewegungsstreifenPx()) { m.Result = (IntPtr)HTCAPTION; return; }
             if (links) { m.Result = (IntPtr)HTLEFT; return; }
             if (rechts) { m.Result = (IntPtr)HTRIGHT; return; }
             if (unten) { m.Result = (IntPtr)HTBOTTOM; return; }

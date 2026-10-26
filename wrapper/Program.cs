@@ -722,6 +722,12 @@ internal sealed class HauptForm : Form
     // (Nutzer-Foto 13.10.2026).
     private int ZiehzonePx() => Math.Max(8, (int)Math.Round(8.0 * DeviceDpi / 96.0));
 
+    /// <summary>Ober-Greifzone in physischen Pixeln, absichtlich SCHMALER als
+    /// die Seiten-Zonen: die Kopfzeile ist die Ziehflaeche zum Verschieben,
+    /// nur ihr oberster Streifen wird Griffrand (v0.21.34 - vorher war die
+    /// Oberkante gar nicht greifbar, die Ecken oben nur in der Breite).</summary>
+    private int ObengriffPx() => Math.Max(4, (int)Math.Round(6.0 * DeviceDpi / 96.0));
+
     // Sichtbares Band in physischen Pixeln: der Trikolore-Streifen (4 px,
     // Nutzer-Wunsch v0.18.11). Das WebView2 reicht bis direkt dahinter.
     private const int BandPx = 4;
@@ -873,15 +879,22 @@ internal sealed class HauptForm : Form
         if (m.Msg == WM_NCHITTEST && WindowState == FormWindowState.Normal && Padding.Left > 0)
         {
             int zone = ZiehzonePx();
+            int zoneOben = ObengriffPx();
             int x = (short)(m.LParam.ToInt32() & 0xFFFF);
             int y = (short)((m.LParam.ToInt32() >> 16) & 0xFFFF);
             var p = PointToClient(new Point(x, y));
             bool links = p.X <= zone;
             bool rechts = p.X >= ClientSize.Width - zone;
-            bool oben = Padding.Top > 0 && p.Y <= Padding.Top;   // Oberzone 0: Kopfzeile zieht (v0.21.5)
+            // OBERGRIFF (v0.21.34): die Oberkante war GAR NICHT greifbar
+            // (Padding.Top 0 sperrte die Zone) und HTTOPLEFT/HTTOPRIGHT fehlten
+            // - die Ecken oben liessen sich nur in der Breite ziehen
+            // (Nutzer-Fund). Schmale Zone ueber der Kopfzeile, unsichtbar.
+            bool oben = p.Y <= zoneOben;
             bool unten = p.Y >= ClientSize.Height - zone;
             if (links && unten) { m.Result = (IntPtr)HTBOTTOMLEFT; return; }
             if (rechts && unten) { m.Result = (IntPtr)HTBOTTOMRIGHT; return; }
+            if (links && oben) { m.Result = (IntPtr)HTTOPLEFT; return; }
+            if (rechts && oben) { m.Result = (IntPtr)HTTOPRIGHT; return; }
             if (oben) { m.Result = (IntPtr)HTTOP; return; }
             if (links) { m.Result = (IntPtr)HTLEFT; return; }
             if (rechts) { m.Result = (IntPtr)HTRIGHT; return; }

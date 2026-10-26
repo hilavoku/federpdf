@@ -11,7 +11,7 @@
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PublishSingleFile>false</PublishSingleFile>
-    <Version>0.21.33</Version>
+    <Version>0.21.34</Version>
     <Product>FederPDF</Product>
     <!-- Zwingend fuer WebView2: sonst landen echte Mausklicks bei gemischter
          Monitor-Skalierung versetzt in der Seite (Knöpfe "tun nichts") -->

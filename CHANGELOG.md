@@ -1,6 +1,16 @@
 # FederPDF — Changelog
 
-Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-25.
+Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
+
+## v0.21.34 — Fenster an der Oberkante und den Ecken oben verstellbar
+- Fehlerbehobung (Nutzer-Fund): Das Fenster ließ sich oben nur in der Breite
+  verändern — die obere Kante war gar nicht greifbar (die Oberzone im
+  Trefferstest war an das obere Rand-Padding gekoppelt, das seit v0.21.5
+  bewusst 0 ist), und die Ecken oben wurden nie als Eck-Zonen gemeldet.
+  Jetzt gibt es eine **schmale, unsichtbare Ober-Greifzone** (6 px logisch,
+  DPI-skaliert — schmaler als die Seitenzonen, damit die Kopfzeile
+  Verschiebe-Fläche bleibt): obere Kante = Höhe ziehen, **Ecken oben links/
+  rechts = diagonal** verstellen. Maximized bleibt randlos.
 
 ## v0.21.33 — Druckereigenschaften-Knopf im Druckdialog
 - Neu (Nutzer-Wunsch nach PDFgear-Vorbild): Unter der Druckerliste oeffnet

@@ -1373,7 +1373,7 @@ function makePageEl(n) {
   const lbl = document.createElement('div'); lbl.className = 'lbl'; lbl.textContent = E('Seite ', 'Page ') + (n+1);
   const img = document.createElement('img');
   img.dataset.page = n; img.loading = 'lazy';
-  img.dataset.renderedDpi = Math.round(BASE_DPI * zoom);
+  img.dataset.renderedDpi = zoomDpi();
   img.src = pageUrl(n);
   img.onload = () => buildPage(img);
   img.onclick = (ev) => pageClick(ev, img, n);
@@ -1382,7 +1382,14 @@ function makePageEl(n) {
   wrap.appendChild(lbl); wrap.appendChild(img);
   return wrap;
 }
-function pageUrl(n) { return `/api/page/${cur.id}/${n}?dpi=${Math.round(BASE_DPI*zoom)}&t=${Date.now()}`; }
+/* Render-DPI zur aktuellen Zoomstufe, GEKLEMMT bei 384: der Zoom-Deckel
+   liegt seit v0.21.38 bei 1600 %, und 96dpi*16 wuerden auf A4 ~1 GB Raster
+   je Seite fordern. Oberhalb von 384 dpi skaliert CSS das Raster hoch -
+   genau so scharf wie bisher beim alten 400-%-Deckel (384 war dessen
+   Maximum). Zentrale Stelle: URL und dataset.renderedDpi (der Nenner der
+   pageW-Rechnung!) muessen stets denselben Wert tragen. */
+function zoomDpi() { return Math.min(384, Math.round(BASE_DPI * zoom)); }
+function pageUrl(n) { return `/api/page/${cur.id}/${n}?dpi=${zoomDpi()}&t=${Date.now()}`; }
 function buildPage(img) {
   img._gen = (img._gen || 0) + 1;   // noch laufende Overlay-Bauten aelterer Durchlaeufe entwerten
   img.parentElement.querySelectorAll('.line,.annot,.winput,.seldrag,.imgobj,.textebene').forEach(e => e.remove());
@@ -1398,7 +1405,7 @@ function buildPage(img) {
   // ueberschreibt gleich mit dem exakten Serverwert.
   if (!img.dataset.pageW)
     img.dataset.pageW = String(img.naturalWidth * 72 /
-      (parseFloat(img.dataset.renderedDpi) || Math.round(BASE_DPI * zoom) || BASE_DPI));
+      (parseFloat(img.dataset.renderedDpi) || zoomDpi() || BASE_DPI));
   // Spaet geladene Seiten auf die JETZTige Zoomstufe ziehen: laedt Seite 3 erst,
   // nachdem der Nutzer (oder das Auto-Einpassen) auf 20 % gestellt hat, wuerde
   // sie sonst in Vollbreite (hier 3170 px) liegen bleiben und Scrollbalken
@@ -1413,7 +1420,7 @@ function refreshPage(n) {
   if (!img) return;
   img.parentElement.querySelectorAll('.line,.annot,.winput,.hit,.seldrag,.imgobj,.textebene').forEach(e => e.remove());
   img.onload = () => buildPage(img);
-  img.dataset.renderedDpi = Math.round(BASE_DPI * zoom);
+  img.dataset.renderedDpi = zoomDpi();
   img.src = pageUrl(n);
   const th = document.querySelector('#thumbrail .thumb[data-page="' + n + '"] img');
   if (th) th.src = `/api/page/${cur.id}/${n}?dpi=22&t=${Date.now()}`;
@@ -1475,7 +1482,12 @@ function zoomUntergrenze() {
 }
 
 function applyZoom(z, focus) {
-  const z2 = Math.max(zoomUntergrenze(), Math.min(4, z));
+  /* Deckel 1600 % (v0.21.38, vorher 400 %): der Einpass-Automatismus lief
+     bei breiten Fenstern gegen die Wand - die Seite blieb klein stehen, der
+     Rest wurde grau (Nutzer-Fund; A4 braucht bei ~3200 px Sichtraum schon
+     >400 %, kleinere Seiten wesentlich frueher). 1600 % ist grosszuegig,
+     die RENDER-DPI ist separat geklemmt (zoomDpi). */
+  const z2 = Math.max(zoomUntergrenze(), Math.min(16, z));
   if (z2 === zoom) return;   // am Limit: nichts skalieren, also auch nicht scrollen
   zoom = z2;
   document.getElementById('zoomLabel').textContent = Math.round(zoom * 100) + ' %';
@@ -1539,7 +1551,7 @@ function fitWidth() {
   const avail = document.getElementById('viewer').clientWidth - 44;
   let pageWpt = 595;
   if (img && img.dataset.pageW) pageWpt = parseFloat(img.dataset.pageW);
-  else if (img) pageWpt = img.naturalWidth / (BASE_DPI * zoom) * 72;
+  else if (img) pageWpt = img.naturalWidth * 72 / (parseFloat(img.dataset.renderedDpi) || zoomDpi());
   applyZoom(avail * 72 / (pageWpt * BASE_DPI));
 }
 
@@ -1616,7 +1628,7 @@ function isNearViewport(w) {
 
 function renderFresh() {
   rerenderTimer = null;
-  const wantDpi = Math.round(BASE_DPI * zoom);
+  const wantDpi = zoomDpi();
   document.querySelectorAll('.pagewrap').forEach(w => {
     if (!isNearViewport(w)) return;
     loadFresh(parseInt(w.dataset.page), w.querySelector('img'), wantDpi);
@@ -1625,7 +1637,7 @@ function renderFresh() {
 
 function ensureFresh() {
   if (rerenderTimer) return;   // Zoomvorgang laeuft noch
-  const wantDpi = Math.round(BASE_DPI * zoom);
+  const wantDpi = zoomDpi();
   document.querySelectorAll('.pagewrap').forEach(w => {
     if (!isNearViewport(w)) return;
     loadFresh(parseInt(w.dataset.page), w.querySelector('img'), wantDpi);

@@ -2,6 +2,17 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
 
+## v0.21.38 — Einpassen folgt auch sehr breiten Fenstern
+- Fehlerbehobung (Nutzer-Fund: „ab einer gewissen Breite passt sich das
+  Dokument nicht mehr an — dreiviertel grauer Hintergrund"): Der Zoom war auf
+  **400 % gedeckelt**. Der Einpass-Automatismus („Breite"/„Seite") rechnet
+  bei wachsendem Fenster immer größere Zoomwerte — an A4 schon ab ~3200 px
+  Sichtraum, bei kleineren Seiten deutlich früher. An der Deckel-Grenze blieb
+  die Seite einfach stehen, der Rest wurde grau. Jetzt: Deckel **1600 %**.
+- Die Raster-Schärfe bleibt wie bisher: Die Render-Auflösung ist auf 384 dpi
+  geklemmt (das Maximum des alten 400-%-Deckels) — darüber skaliert die
+  Ansicht das Bild hoch statt Speicher in Gigabyte-Raster zu füllen.
+
 ## v0.21.37 — Obere Kante: Trikolore-Band wieder bündig
 - Fehlerbehobung (Nutzer-Fund mit Screenshot): Nach der greifbaren Oberkante
   (v0.21.36) schlossen die seitlichen Trikolore-Bänder nicht mehr bündig mit

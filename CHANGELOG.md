@@ -2,6 +2,14 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
 
+## v0.21.39 — Neue Dokumente öffnen in Seitenbreite
+- Änderung (Nutzer-Wunsch): Beim Öffnen eines PDF wird die Ansicht auf
+  **Seitenbreite** eingepasst statt 1:1 (100 %) — wie bei PDFgear. Riesige
+  Scan-Seiten werden weiterhin automatisch eingepasst (der bisherige
+  Sonderfall ist in der allgemeinen Einpassung aufgegangen). Der Einpass-
+  Modus ist ab dem Öffnen aktiv: Zieht man das Fenster breiter oder schmaler,
+  folgt die Ansicht weiterhin automatisch.
+
 ## v0.21.38 — Einpassen folgt auch sehr breiten Fenstern
 - Fehlerbehobung (Nutzer-Fund: „ab einer gewissen Breite passt sich das
   Dokument nicht mehr an — dreiviertel grauer Hintergrund"): Der Zoom war auf

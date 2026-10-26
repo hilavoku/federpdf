@@ -1318,9 +1318,11 @@ function openDoc(info) {
   // des VORHERIGEN Dokuments (bis 400 % vom Detailllesen, oder 20 % vom
   // Riesen-Scan-Fit) darf nicht uebernommen werden - sonst zeigt ein
   // normales A4 nur noch einen Bildschirmausschnitt (Nutzer-Fund
-  // 23.10.2026, "nur ca. 1/6 der Seite").
+  // 23.10.2026, "nur ca. 1/6 der Seite"). Startzoom ist SEITENBREITE
+  // (Nutzer-Wunsch 26.10.2026, wie PDFgear) - bis das erste Seitenbild
+  // geladen ist, gilt uebergangsweise 100 %.
   zoom = 1;
-  fitModus = null;   // Einpass-Follow gilt nicht fuer das frisch geoeffnete Dokument
+  fitModus = null;   // fitWidth setzt 'breite', sobald das Bild da ist
   document.getElementById('zoomLabel').textContent = '100 %';
   hits = []; hitIdx = -1; document.getElementById('hitInfo').textContent = '';
   document.getElementById('saveBtn').disabled = false;
@@ -1349,22 +1351,20 @@ function openDoc(info) {
   buildThumbs();
   document.getElementById('undoBtn').disabled = false;
   updatePageIndicator();
-  // Riesenseiten beim Oeffnen EINPASSSEN: Scan-MediaBoxen (z. B. 2400 pt,
-  // Nutzer-Fall v0.21.1) stehen bei 100 % als mehrfach fensterbreite Monster
-  // da - unbedienbar. Nur wenn die erste Seite deutlich breiter ist als der
-  // Sichtraum (Faktor 2), wird eingepaßt; normale Dokumente bleiben bei 100 %.
+  // Beim Oeffnen auf SEITENBREITE einpassen (Nutzer-Wunsch 26.10.2026):
+  // braucht das geladene erste Seitenbild (dataset.pageW), laeuft daher im
+  // onload. Deckt auch Riesenseiten ab (Scan-MediaBoxen, z. B. 2400 pt) -
+  // der fruehere Sonderfall "nur wenn 2x breiter" ist aufgegangen. Guard
+  // bleibt: Im Layout-Uebergang (Fensterstart/DPI-Wechsel) kann der Viewer
+  // kurz stauchschmal sein - jede Fit-Rechnung waere Unsinn.
   const erstesImg = v.querySelector('.pagewrap img');
-  const riesigEinpassen = (im) => {
-    // Guard: Im Layout-Übergang (Fensterstart/DPI-Wechsel) kann der Viewer
-    // kurz stauchschmal sein - dann ist jede Fit-Rechnung Unsinn (negativer
-    // Spielraum klemmt z. B. auf die Untergrenze). Erst ab belastbarer Breite.
+  const beimOeffnenEinpassen = () => {
     if (document.getElementById('viewer').clientWidth < 200) return;
-    const breite100 = im.dataset.pageW ? parseFloat(im.dataset.pageW) * 96 / 72 : im.naturalWidth;
-    if (breite100 > document.getElementById('viewer').clientWidth * 2) fitWidth();
+    fitWidth();   // setzt fitModus='breite' -> Resize-Follow aktiv ab dem Öffnen
   };
-  if (erstesImg && erstesImg.complete && erstesImg.naturalWidth) riesigEinpassen(erstesImg);
-  else if (erstesImg) erstesImg.addEventListener('load', () => riesigEinpassen(erstesImg), { once: true });
-  zoomModusAktualisieren();   // Fussleisten-Faerbung auf 1:1 (neues Dokument)
+  if (erstesImg && erstesImg.complete && erstesImg.naturalWidth) beimOeffnenEinpassen();
+  else if (erstesImg) erstesImg.addEventListener('load', beimOeffnenEinpassen, { once: true });
+  zoomModusAktualisieren();   // Fussleisten-Faerbung (nach dem Einpassen: Breite aktiv)
 }
 function makePageEl(n) {
   const wrap = document.createElement('div');

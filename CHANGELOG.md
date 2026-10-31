@@ -2,6 +2,27 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
 
+## v0.21.43 — Druck wirklich zentriert (Doppelrand behoben)
+- Fehlerbehobung (Nutzer-Fund: „Das Dokument ist immer noch nicht zentriert"):
+  Die Berechnung der druckbaren Fläche zog den Hardware-Rand des Druckers
+  **doppelt** ab — einmal als Ursprungs-Offset und nochmal von der Größe.
+  Gemessen am HP OfficeJet Pro 9010 (Rand links/oben je 3 mm): Die Fläche
+  schrumpfte dadurch um 3 mm und der Inhalt rückte um 1,5 mm nach oben und
+  links — rechts/ unten blieb entsprechend mehr Weißraum. Seit der ersten
+  Druckversion (v0.21.24) wirkte das auf jeden Ausdruck.
+- Semantik gemessen und im Code festgehalten: PrintableArea meldet X/Y als
+  Ursprung und **W/H bereits ohne die Hardware-Ränder** (HP: 11,7 + 803,5 =
+  815 ≤ 827 Blattbreite; Lexware-Export ebenso). Die Berechnung nutzt jetzt
+  X/Y und W/H unverändert — das Dokument steht optisch zentriert in der
+  tatsächlich bedruckbaren Fläche (die körperlichen Ränder des Druckers
+  bleiben als schmale Symmetrie-Restdifferenz, so wie Word/Acrobat es auch
+  tun). Vorschau und Druck bleiben deckungsgleich.
+- Nachweise: Druck-Harness um Semantik-Check erweitert, der nur auf
+  Rechnern mit echtem Hardware-Rand diskriminiert — am Notebook PASS für
+  HP (X = 11,67) und Lexware (X = 23,5); am ThinkCentre (randloser PDF-
+  Drucker) unverändert 32/32 PASS. Auf dem Notebook läuft der komplette
+  Harness (inkl. echter Drucke nach PDF) ebenfalls ALLE PASS.
+
 ## v0.21.42 — Seitenrand einstellbar (Druckdialog)
 - Neu (Nutzer-Wunsch „Seitenränder einstellen"): Der Druckdialog hat ein
   **Seitenrand-Feld in Millimetern (0–50)** neben „Kopien". Der Rand wird

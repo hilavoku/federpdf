@@ -43,21 +43,28 @@ internal static class DruckLayout
     }
 
     /// <summary>Druckbare Flaeche einer PageSettings in pt, ORIENTIERUNGS-
-    /// KORRIGIERT: PageSettings.PrintableArea folgt der Landscape-DEVMODE
-    /// NICHT (Mess-Fund 31.10.2026, "Microsoft Print to PDF": unter Landscape
+    /// KORRIGIERT. Mess-Funde 31.10.2026: (1) PrintableArea folgt der
+    /// Landscape-DEVMODE NICHT ("Microsoft Print to PDF": unter Landscape
     /// meldet Bounds 1169x827, PrintableArea aber stur 827x1169 - die Kompo-
-    /// sition blieb auf der linken Blatthaelfte). Massgabe ist die BLATT-Klasse
-    /// (blattB/blattH - Bounds ist ausgerichtet): widerspricht die gemessene
-    /// Flaeche der Blattklasse entscheidend, werden X/Y/W/H getauscht. Der
-    /// 1,15-Vorbehalt verhindert Kippeln bei quadratnahen Blaettern.</summary>
+    /// sition blieb auf der linken Blatthaelfte). (2) Die SEMANTIK ist
+    /// X/Y = Ursprungs-Offsets (unbedruckbarer Rand links/oben) und W/H =
+    /// die BEREITS BEREINIGTE druckbare Groesse (HP OfficeJet 9010:
+    /// X 11,67 + W 803,5 = 815 <= 827 Blattbreite; Lexware ebenso) - der
+    /// fruehere Abzug von X/Y von W/H war ein DOPPELTER Hardware-Rand und
+    /// verschob den Inhalt um die halbe Randbreite nach oben/links
+    /// (Nutzer-Fund "Dokument nicht zentriert"). Massgabe fuer den Tausch
+    /// ist die BLATT-Klasse (blattB/blattH - Bounds ist ausgerichtet):
+    /// widerspricht die gemessene Flaeche der Blattklasse entscheidend,
+    /// werden X/Y/W/H getauscht. Der 1,15-Vorbehalt verhindert Kippeln bei
+    /// quadratnahen Blaettern.</summary>
     public static RectangleF DruckbareFlaeche(PageSettings seite, double blattB, double blattH)
     {
         var flaeche = new RectangleF(18f, 18f, (float)(blattB - 36), (float)(blattH - 36));
         try
         {
-            var pa = seite.PrintableArea;   // 1/100 Zoll, NICHT zuverlaessig ausgerichtet
+            var pa = seite.PrintableArea;   // 1/100 Zoll: (X,Y) = Offsets, (W,H) = druckbar
             float ax = Math.Max(0f, pa.X), ay = Math.Max(0f, pa.Y);
-            float aw = Math.Max(1f, pa.Width - ax), ah = Math.Max(1f, pa.Height - ay);
+            float aw = Math.Max(1f, pa.Width), ah = Math.Max(1f, pa.Height);
             flaeche = new RectangleF(ax * 0.72f, ay * 0.72f, aw * 0.72f, ah * 0.72f);
             bool blattQuer = blattB > blattH * 1.15;
             bool blattHoch = blattH > blattB * 1.15;

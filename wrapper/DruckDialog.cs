@@ -27,6 +27,7 @@ internal sealed class DruckDialog : Form
     private readonly double[][] masse;           // Seitenmasse in pt [b,h] je Seite
     private readonly double startRandMm;         // gespeicherter Seitenrand (mm)
     private readonly bool startOben;             // gespeicherte Position (kopfbuendig?)
+    private readonly bool startSw;               // gespeicherte Farbwahl (true = schwarzweiß)
 
     // Theme-Paletten (Farben aus der Web-UI: body / body.light)
     private readonly bool hell;
@@ -35,7 +36,7 @@ internal sealed class DruckDialog : Form
     private readonly Panel zpanel;
     private readonly PictureBox vorschau;
     private readonly ComboBox drucker, duplex, skalierung;
-    private readonly ComboBox papierFormat, proBlatt, ausrichtung, position;   // Papier / N-up / Hoch-Quer / Mittig-Oben
+    private readonly ComboBox papierFormat, proBlatt, ausrichtung, position, farbe;   // Papier / N-up / Hoch-Quer / Position / Farbe
     private readonly RadioButton alles, aktuelle, bereich;
     private readonly NumericUpDown von, bis, kopien, prozent, seitenrand;
     private readonly Button zurueck, weiter, drucken, abbruch, zoomMinus, zoomPlus, zoomPassend, eigenschaften;
@@ -106,6 +107,10 @@ internal sealed class DruckDialog : Form
     /// (horizontal immer zentriert).</summary>
     public bool ObenBuendig => position.SelectedIndex == 1;
 
+    /// <summary>true = farbig drucken (Standard), false = Schwarzweiß (die
+    /// Seitenbilder werden vor dem Zeichnen entzerrt-graustufig gerechnet).</summary>
+    public bool Farbig => farbe.SelectedIndex == 0;
+
     /// <param name="dpi">DeviceDpi des Owner-Fensters (Layout-Skalierung).</param>
     /// <param name="hellF">App-Theme (true = helles Design der Web-UI).</param>
     /// <param name="seitenmasse">Seitenmasse in pt je Seite (fuer die Blatt-Komposition).</param>
@@ -113,7 +118,7 @@ internal sealed class DruckDialog : Form
     /// <param name="startOben">Gespeicherte Position (true = kopfbuendig).</param>
     public DruckDialog(int seitenAnzahl, int aktuelleSeite, Func<int, int, bool, Image> bildLader,
                        string uiSprache, int dpi, bool hellF, double[][] seitenmasse,
-                       double randStartMm = 0, bool startObenF = false)
+                       double randStartMm = 0, bool startObenF = false, bool startSwF = false)
     {
         seiten = seitenAnzahl;
         seiteBild = bildLader;
@@ -124,6 +129,7 @@ internal sealed class DruckDialog : Form
         masse = seitenmasse;
         startRandMm = Math.Clamp(randStartMm, 0, 50);
         startOben = startObenF;
+        startSw = startSwF;
         hell = hellF;
 
         if (hell)
@@ -163,7 +169,7 @@ internal sealed class DruckDialog : Form
         TitelzeileBauen();
         (zpanel, vorschau, zurueck, weiter, seitenZahl, vorschauInfo,
          zoomMinus, zoomPlus, zoomPassend, zoomLabel) = VorschauBauen();
-        (drucker, eigenschaften, papierFormat, proBlatt, ausrichtung, position, duplex, skalierung,
+        (drucker, eigenschaften, papierFormat, proBlatt, ausrichtung, farbe, position, duplex, skalierung,
          alles, aktuelle, bereich, von, bis, kopien, seitenrand, prozent,
          prozentZeile, mitAnnots, drucken, abbruch) = SpalteBauen();
 
@@ -313,6 +319,12 @@ internal sealed class DruckDialog : Form
     internal void PositionWaehlen(bool oben)
     {
         position.SelectedIndex = oben ? 1 : 0;
+    }
+
+    /// <summary>Farbwahl ueber die ECHTE Combo setzen - intern.</summary>
+    internal void FarbWaehlen(bool farbig)
+    {
+        farbe.SelectedIndex = farbig ? 0 : 1;
     }
 
     /// <summary>Zoom mit EXPLIZITEM Anker (Bildschirm-Punkt im zpanel) - intern
@@ -516,7 +528,7 @@ internal sealed class DruckDialog : Form
     }
 
     // ---------------------------------------------------------------- Spalte rechts
-    private (ComboBox, Button, ComboBox, ComboBox, ComboBox, ComboBox, ComboBox, ComboBox,
+    private (ComboBox, Button, ComboBox, ComboBox, ComboBox, ComboBox, ComboBox, ComboBox, ComboBox,
              RadioButton, RadioButton, RadioButton,
              NumericUpDown, NumericUpDown, NumericUpDown, NumericUpDown, NumericUpDown,
              Panel, CheckBox, Button, Button) SpalteBauen()
@@ -626,7 +638,7 @@ internal sealed class DruckDialog : Form
         spalte.Controls.Add(pb);
         y += S(34 + 8);
 
-        // Ausrichtung + Seitenrand teilen sich eine Zeile (Kurzbeschriftungen,
+        // Ausrichtung + Farbwahl teilen sich eine Zeile (Kurzbeschriftungen,
         // die auch bei 150-%-DPI in die halbe Breite passen - gemessen)
         int halb = (fw - S(12)) / 2;
         var capA = new Label
@@ -637,9 +649,9 @@ internal sealed class DruckDialog : Form
             AutoSize = true,
             Location = new Point(rand, y),
         };
-        var capS = new Label
+        var capF = new Label
         {
-            Text = T("Seitenrand", "Page margin").ToUpper(),
+            Text = T("Farbe", "Color").ToUpper(),
             Font = Ft(8.25f, FontStyle.Bold),
             ForeColor = muted,
             AutoSize = true,
@@ -655,38 +667,16 @@ internal sealed class DruckDialog : Form
             try { druckerEinstellungen.DefaultPageSettings.Landscape = au.SelectedIndex == 1; } catch { }
             VorschauVerzoegertStarten();
         };
-        var sr = new NumericUpDown
+        var fa = Kombi(); fa.Size = new Size(halb, S(34)); fa.Location = new Point(rand + halb + S(12), y);
+        fa.Items.AddRange(new object[] { T("Farbe", "Color"), T("Schwarzweiß", "Black & white") });
+        fa.SelectedIndex = startSw ? 1 : 0;
+        fa.SelectedIndexChanged += (_, _) =>
         {
-            Location = new Point(rand + halb + S(12), y),
-            Size = new Size(S(64), S(34)),
-            Minimum = 0, Maximum = 50,
-            Value = Math.Clamp((decimal)startRandMm, 0, 50),
-            BackColor = feld, ForeColor = textFarbe, BorderStyle = BorderStyle.None,
-            Font = Ft(10.5f),
-            TextAlign = HorizontalAlignment.Center,
+            if (synchronisiere) return;
+            VorschauVerzoegertStarten();
         };
-        var srL = new Label
-        {
-            Text = "mm", Font = Ft(10f), ForeColor = muted, AutoSize = true,
-            Location = new Point(rand + halb + S(12) + S(70), y + S(7)),
-        };
-        sr.ValueChanged += (_, _) => VorschauVerzoegertStarten();   // Randwechsel sofort sichtbar
-        spalte.Controls.Add(capA); spalte.Controls.Add(capS);
-        spalte.Controls.Add(au); spalte.Controls.Add(sr); spalte.Controls.Add(srL);
-        y += S(34 + 20);
-
-        // Kopien (volle Zeile - der Seitenrand wohnt neben der Ausrichtung)
-        spalte.Controls.Add(Caption(T("Kopien", "Copies"), ref y, rand));
-        var ko = new NumericUpDown
-        {
-            Location = new Point(rand, y),
-            Size = new Size(S(120), S(34)),
-            Minimum = 1, Maximum = 99, Value = 1,
-            BackColor = feld, ForeColor = textFarbe, BorderStyle = BorderStyle.None,
-            Font = Ft(10.5f),
-            TextAlign = HorizontalAlignment.Center,
-        };
-        spalte.Controls.Add(ko);
+        spalte.Controls.Add(capA); spalte.Controls.Add(capF);
+        spalte.Controls.Add(au); spalte.Controls.Add(fa);
         y += S(34 + 20);
 
         spalte.Controls.Add(Caption(T("Seiten", "Pages"), ref y, rand));
@@ -774,6 +764,54 @@ internal sealed class DruckDialog : Form
         spalte.Controls.Add(du); spalte.Controls.Add(pos);
         y += S(34 + 20);
 
+        // Kopien + Seitenrand teilen sich eine Zeile (wie bis v0.21.46 - die
+        // Farbwahl wohnt jetzt neben der Ausrichtung)
+        var capK = new Label
+        {
+            Text = T("Kopien", "Copies").ToUpper(),
+            Font = Ft(8.25f, FontStyle.Bold),
+            ForeColor = muted,
+            AutoSize = true,
+            Location = new Point(rand, y),
+        };
+        var capS = new Label
+        {
+            Text = T("Seitenrand", "Page margin").ToUpper(),
+            Font = Ft(8.25f, FontStyle.Bold),
+            ForeColor = muted,
+            AutoSize = true,
+            Location = new Point(rand + halb + S(12), y),
+        };
+        y += S(24);
+        var ko = new NumericUpDown
+        {
+            Location = new Point(rand, y),
+            Size = new Size(S(120), S(34)),
+            Minimum = 1, Maximum = 99, Value = 1,
+            BackColor = feld, ForeColor = textFarbe, BorderStyle = BorderStyle.None,
+            Font = Ft(10.5f),
+            TextAlign = HorizontalAlignment.Center,
+        };
+        var sr = new NumericUpDown
+        {
+            Location = new Point(rand + halb + S(12), y),
+            Size = new Size(S(64), S(34)),
+            Minimum = 0, Maximum = 50,
+            Value = Math.Clamp((decimal)startRandMm, 0, 50),
+            BackColor = feld, ForeColor = textFarbe, BorderStyle = BorderStyle.None,
+            Font = Ft(10.5f),
+            TextAlign = HorizontalAlignment.Center,
+        };
+        var srL = new Label
+        {
+            Text = "mm", Font = Ft(10f), ForeColor = muted, AutoSize = true,
+            Location = new Point(rand + halb + S(12) + S(70), y + S(7)),
+        };
+        sr.ValueChanged += (_, _) => VorschauVerzoegertStarten();   // Randwechsel sofort sichtbar
+        spalte.Controls.Add(capK); spalte.Controls.Add(capS);
+        spalte.Controls.Add(ko); spalte.Controls.Add(sr); spalte.Controls.Add(srL);
+        y += S(34 + 20);
+
         spalte.Controls.Add(Caption(T("Skalierung", "Scaling"), ref y, rand));
         var sk = Kombi(); sk.Location = new Point(rand, y);
         sk.Items.AddRange(new object[]
@@ -836,7 +874,7 @@ internal sealed class DruckDialog : Form
         };
 
         Controls.Add(spalte);
-        return (cb, eg, pf, pb, au, pos, du, sk, ra, rk, rb, vn, bs, ko, sr, pzFeld, pz, chk, ok, ab);
+        return (cb, eg, pf, pb, au, fa, pos, du, sk, ra, rk, rb, vn, bs, ko, sr, pzFeld, pz, chk, ok, ab);
     }
 
     private Label Caption(string text, ref int y, int rand)
@@ -1105,6 +1143,7 @@ internal sealed class DruckDialog : Form
             {
                 int nr = auftrag[i];
                 var roh = seiteBild(nr, dpi, mitAnnots.Checked);
+                if (!Farbig) { var grau = Program.Graustufen(roh); roh.Dispose(); roh = grau; }   // Vorschau = Druck
                 eigene.Add(roh);
                 teile.Add((roh, masse[nr][0], masse[nr][1]));
             }

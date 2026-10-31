@@ -2,6 +2,27 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
 
+## v0.21.49 — Farbe/Schwarzweiß + reparierter Streifendruck
+- **Neu: Farbwahl „Farbe / Schwarzweiß"** im Druckdialog (neben der
+  Ausrichtung). Bei Schwarzweiß werden die Seitenbilder entzerrt grau
+  gerechnet (Luminanz) — live in der Vorschau und im Druck (Vorschau =
+  Druck). Die Wahl wird wie Rand/Position gemerkt (einstellungen.json,
+  „druckSw").
+- **Fehlerbehobung (Nutzer-Fund: beim Fahrzeugschein ist der unterste
+  Zentimeter des Ausdrucks unlesbar — „Balken und Farbverläufe"):** Der
+  Druck übertrug jede Seite als EINE riesige Bild-Operation (A4 bei
+  600 dpi ≈ 7000×4900 px) an den Druckertreiber — manche Treiber rastern
+  davon den letzten Bandstreifen fehlerhaft, genau dort liegt beim
+  Fahrzeugschein das feine Sicherheitsmuster. Jetzt wird die Seite in
+  ~2,5-Zoll-Streifen gezeichnet (quellgetreu, Ergebnis identisch) — der
+  Treiber bekommt handliche Häppchen. Auch für N-up-Drucke aktiv.
+- Die Spalte wurde umsortiert: Ausrichtung|Farbe und Duplex|Position als
+  Paare, Kopien|Seitenrand wie gewohnt — keine zusätzliche Höhe.
+- Nachweise: Druck-Harness (39 Checks) — S/W-Vorschau entzerrt Rot zu
+  Grau und zurück, Graustufen-Helfer prüft die Luminanz exakt; alle
+  Drucke-nach-PDF-Streifenprüfungen unverändert PASS (35). Sichtprobe
+  (Fahrzeugschein + S/W) durch den Nutzer am HP.
+
 ## v0.21.48 — Duplex-Begriffe vollständig lesbar
 - Nachbesserung (Nutzer-Screenshot: „Kante lang/kurz" war in der halben
   Spaltenbreite abgeschnitten — der entscheidende Zusatz fehlte): Die

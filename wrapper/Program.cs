@@ -24,6 +24,7 @@ internal static class Program
     // zurückschreiben (Server bleibt alleiniger Schreiber der Datei)
     private static double druckRandMm;
     private static bool druckOben;
+    private static bool druckSw;   // true = schwarzweiß drucken
 
     [STAThread]
     private static void Main(string[] args)
@@ -65,6 +66,9 @@ internal static class Program
                 if (doc.RootElement.TryGetProperty("druckOben", out var dob)
                     && (dob.ValueKind == JsonValueKind.True || dob.ValueKind == JsonValueKind.False))
                     druckOben = dob.GetBoolean();
+                if (doc.RootElement.TryGetProperty("druckSw", out var dsw)
+                    && (dsw.ValueKind == JsonValueKind.True || dsw.ValueKind == JsonValueKind.False))
+                    druckSw = dsw.GetBoolean();
             }
         }
         catch { /* kaputte/kompatible Datei: Deutsch/Dunkel bleibt */ }
@@ -444,7 +448,7 @@ internal static class Program
             Image BildLader(int nr, int dpi, bool annots) => SeiteVomServer(did, nr, dpi, annots);
             var owner = webView.FindForm();
             using var dlg = new DruckDialog(seiten, aktuelleSeite, BildLader, uiSprache,
-                owner?.DeviceDpi ?? 96, uiHell, masse, druckRandMm, druckOben);
+                owner?.DeviceDpi ?? 96, uiHell, masse, druckRandMm, druckOben, druckSw);
             if (owner != null) dlg.ZentrierenAuf(owner);   // im DPI-Kontext des Owners erstellen
             if (dlg.ShowDialog(owner) != DialogResult.OK)
             {
@@ -460,6 +464,7 @@ internal static class Program
             int proBlatt = dlg.SeitenProBlatt;
             double randMm = dlg.RandMm;
             bool oben = dlg.ObenBuendig;
+            bool farbe = dlg.Farbig;
             // Einstellungen inkl. Treiber-Eigenschaften (Papier/Qualitaet/Farbe
             // aus dem Druckereigenschaften-Dialog) MITNEHMEN, bevor der Dialog
             // disposed wird
@@ -469,11 +474,12 @@ internal static class Program
                 await Melden(webView, "null");
                 return;
             }
-            // Seitenrand/Position persistieren (Best-Effort, blockiert den Druck nicht)
-            if (Math.Abs(randMm - druckRandMm) > 0.01 || oben != druckOben)
+            // Seitenrand/Position/Farbwahl persistieren (Best-Effort, blockiert den Druck nicht)
+            if (Math.Abs(randMm - druckRandMm) > 0.01 || oben != druckOben || farbe == druckSw)
             {
                 druckRandMm = randMm;
                 druckOben = oben;
+                druckSw = !farbe;
                 _ = Task.Run(PrefsRandSchreiben);
             }
 
@@ -532,7 +538,9 @@ internal static class Program
                             antwort.CopyTo(ms);
                             ms.Position = 0;
                             using var roh = System.Drawing.Image.FromStream(ms);
-                            bilder.Add(new Bitmap(roh));
+                            var b = new Bitmap(roh);
+                            if (!farbe) { var grau = Graustufen(b); b.Dispose(); b = grau; }
+                            bilder.Add(b);
                         }
                         BlattZeichnen(ev.Graphics!, ev.PageSettings, stapel, bilder, skalierung, proBlatt, randPt, oben);
                     }
@@ -593,11 +601,61 @@ internal static class Program
             if (node == null) return;
             node["druckRandMm"] = druckRandMm;
             node["druckOben"] = druckOben;
+            node["druckSw"] = druckSw;
             using var content = new StringContent(node.ToJsonString(),
                 System.Text.Encoding.UTF8, "application/json");
             http.PostAsync($"http://127.0.0.1:{port}/api/prefs", content).Wait();
         }
         catch { /* Prefs sind Best-Effort - der Druck ist davon unberuehrt */ }
+    }
+
+    /// <summary>Seitenbild in Graustufen rechnen (Luminanz, Rec.601) — für die
+    /// S/W-Farbwahl in Vorschau UND Druck (Vorschau = Druck).</summary>
+    internal static Bitmap Graustufen(Image quelle)
+    {
+        var grau = new Bitmap(quelle.Width, quelle.Height);
+        using (var g = Graphics.FromImage(grau))
+        {
+            var m = new System.Drawing.Imaging.ColorMatrix
+            {
+                Matrix00 = 0.299f, Matrix01 = 0.299f, Matrix02 = 0.299f,
+                Matrix10 = 0.587f, Matrix11 = 0.587f, Matrix12 = 0.587f,
+                Matrix20 = 0.114f, Matrix21 = 0.114f, Matrix22 = 0.114f,
+                Matrix33 = 1f, Matrix44 = 1f,
+            };
+            using var ia = new System.Drawing.Imaging.ImageAttributes();
+            ia.SetColorMatrix(m);
+            g.DrawImage(quelle, new Rectangle(0, 0, quelle.Width, quelle.Height),
+                        0, 0, quelle.Width, quelle.Height, GraphicsUnit.Pixel, ia);
+        }
+        return grau;
+    }
+
+    /// <summary>Seitenbild in horizontale STREIFEN zu je ~2,5 Zoll teilen und
+    /// zeichnen (ziel in 1/100 Zoll): EINE riesige Stretch-Blt-Operation
+    /// (A4 bei 600 dpi ≈ 7000×4900 px) rastern manche Treiber am letzten
+    /// Band-Streifen als Balken/Farbverläufe — der unterste Zentimeter des
+    /// Ausdrucks war unlesbar (Nutzer-Fund am Fahrzeugschein). Die Streifen
+    /// sind quellgetreu zugeordnet, das Ergebnis identisch zum einen Blt.
+    /// Screen-Zeichnung (Vorschau) braucht das nicht.</summary>
+    private static void BildGebandertZeichnen(Graphics g, Image bild, RectangleF ziel)
+    {
+        float dpy = Math.Max(50f, g.DpiY);
+        double bandH = 25000.0 / dpy;   // 1/100 Zoll (~250 Geraetepixel)
+        if (ziel.Height <= bandH)
+        {
+            g.DrawImage(bild, ziel);
+            return;
+        }
+        for (double y = 0; y < ziel.Height - 0.01;)
+        {
+            double dH = Math.Min(bandH, ziel.Height - y);
+            var z = new RectangleF(ziel.X, ziel.Y + (float)y, ziel.Width, (float)dH);
+            var q = new RectangleF(0, (float)(bild.Height * y / ziel.Height),
+                                   bild.Width, (float)(bild.Height * dH / ziel.Height));
+            g.DrawImage(bild, z, q, GraphicsUnit.Pixel);
+            y += dH;
+        }
     }
 
     /// <summary>Eine PDF-Seite zeichnen: Seitenverhaeltnis erhalten, zentriert
@@ -641,9 +699,10 @@ internal static class Program
             ? Math.Min(aw / b100, ah / h100)
             : skalierung;
         double b = b100 * skala, h = h100 * skala;
-        g.DrawImage(bild, ax + (float)((aw - b) / 2.0),
-                    ay + (float)(oben ? 0 : (ah - h) / 2.0),   // kopfbuendig auf Wunsch
-                    (float)b, (float)h);
+        BildGebandertZeichnen(g, bild, new RectangleF(
+            ax + (float)((aw - b) / 2.0),
+            ay + (float)(oben ? 0 : (ah - h) / 2.0),   // kopfbuendig auf Wunsch
+            (float)b, (float)h));
     }
 
     /// <summary>Einen Druck-Blattbogen zeichnen (Koordinaten 1/100 Zoll):
@@ -692,7 +751,8 @@ internal static class Program
         {
             var zelle = DruckLayout.Zelle(flaeche, spalten, zeilen, i);
             var ziel = DruckLayout.SeiteInZelle(stapel[i].bPt, stapel[i].hPt, zelle, 0, oben);
-            g.DrawImage(bilder[i], ziel.X / 0.72f, ziel.Y / 0.72f, ziel.Width / 0.72f, ziel.Height / 0.72f);
+            BildGebandertZeichnen(g, bilder[i], new RectangleF(
+                ziel.X / 0.72f, ziel.Y / 0.72f, ziel.Width / 0.72f, ziel.Height / 0.72f));
         }
     }
 

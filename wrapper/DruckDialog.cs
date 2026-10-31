@@ -393,8 +393,8 @@ internal sealed class DruckDialog : Form
             BackColor = papier,
             ForeColor = textFarbe,
         };
-        var zr = Nav("\u2039", 290);
-        var zv = Nav("\u203A", 410);
+        var zr = Nav("\u2039", 160);
+        var zv = Nav("\u203A", 470);
         zr.FlatAppearance.BorderSize = 0; zv.FlatAppearance.BorderSize = 0;
         zr.FlatAppearance.MouseOverBackColor = feld; zv.FlatAppearance.MouseOverBackColor = feld;
 
@@ -424,9 +424,9 @@ internal sealed class DruckDialog : Form
             BackColor = papier,
             ForeColor = textFarbe,
         };
-        var zm = Zoomk("\u2212", 460);   // −
-        var zp2 = Zoomk("+", 646);
-        var zf = Zoomk("\u2922", 688);   // Anpassen-Symbol
+        var zm = Zoomk("\u2212", 524);   // −
+        var zp2 = Zoomk("+", 660);
+        var zf = Zoomk("\u2922", 702);   // Anpassen-Symbol
         zm.FlatAppearance.BorderSize = 0; zp2.FlatAppearance.BorderSize = 0; zf.FlatAppearance.BorderSize = 0;
         zm.FlatAppearance.MouseOverBackColor = feld; zp2.FlatAppearance.MouseOverBackColor = feld; zf.FlatAppearance.MouseOverBackColor = feld;
         var zl = new Label
@@ -438,7 +438,7 @@ internal sealed class DruckDialog : Form
             // 150-%-Display (DPI²-Falle, wie die Seitenzahl)
             AutoSize = true,
             BackColor = Color.Transparent,
-            Location = new Point(S(498), zone.Height - S(73)),
+            Location = new Point(S(562), zone.Height - S(73)),
         };
 
         var info = new Label
@@ -970,7 +970,7 @@ internal sealed class DruckDialog : Form
         {
             vorschau.Image = null;
             seitenZahl.Text = "-";
-            seitenZahl.Left = S(372) - seitenZahl.PreferredWidth / 2;
+            seitenZahl.Left = S(315) - seitenZahl.PreferredWidth / 2;
             InfoSetzen(T("Keine Seiten gewählt.", "No pages selected."));
             return;
         }
@@ -983,7 +983,9 @@ internal sealed class DruckDialog : Form
         {
             seitenZahl.Text = string.Format(T("Blatt {0} / {1}", "Sheet {0} / {1}"), vorschauPos + 1, blaetter);
         }
-        seitenZahl.Left = S(372) - seitenZahl.PreferredWidth / 2;
+        // Zentriert zwischen den Pfeilen (diese stehen hoher im Z-Order und
+        // wuerden ueberstehende Zeichen verdecken - Nutzer-Fund "eite 1 / i")
+        seitenZahl.Left = S(315) - seitenZahl.PreferredWidth / 2;
     }
 
     internal void VorschauLaden()

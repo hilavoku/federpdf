@@ -2,6 +2,16 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
 
+## v0.21.45 — Fußzeile: Seitenzahl frei zwischen den Pfeilen
+- Nachbesserung (Nutzer-Fund: „eite 1 / i" blieb): Die Blätterpfeile ‹ ›
+  stehen höher in der Zeichnung als die Seitenzahl und verdeckten deren
+  äußere Zeichen — die v0.21.44-AutoSize-Breite allein half da nicht, weil
+  der Text jetzt unter die Knöpfe lief. Die Fußzeile ist umgebaut: Pfeile
+  weiter auseinander (160/470 statt 290/410), die Seitenzahl zentriert
+  sich in dem breiten Zwischenraum dynamisch, Zoomknöpfe/„Angepasst" sind
+  rechts nachgerückt. Selbst extrem lange Seitenzahlen („Seite 999 / 999")
+  passen zwischen die Pfeile.
+
 ## v0.21.44 — Druckdialog sauber auf 150-%-Displays
 - Fehlerbehobung (Nutzer-Screenshot: „eite 1 / i", „Angepas", überlappende
   Überschriften „SEITEN PRO BLATT .USRICHTUNG", rechts abgeschnittene

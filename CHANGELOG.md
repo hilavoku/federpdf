@@ -2,6 +2,20 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
 
+## v0.21.44 — Druckdialog sauber auf 150-%-Displays
+- Fehlerbehobung (Nutzer-Screenshot: „eite 1 / i", „Angepas", überlappende
+  Überschriften „SEITEN PRO BLATT .USRICHTUNG", rechts abgeschnittene
+  Combos): WinForms-Schrift-Pixel wachsen am 144-DPI-Bildschirm mit
+  **DPI²** (die Punktgröße wird mit dem DPI-Faktor multipliziert und der
+  Bildschirm skaliert nochmal), während die Layout-Boxen nur mit DPI
+  wachsen — feste Label-Breiten clippten den Text, die nebeneinander
+  gestellten Überschriften überlappten sich. Jetzt: „Seiten pro Blatt"
+  und „Ausrichtung" stehen **untereinander** (Dialog etwas höher, die
+  Vorschau wächst mit), und Seitenzahl/Zoomtext/Infotext sind **AutoSize
+  mit transparentem Hintergrund** und werden dynamisch zentriert — der
+  Text bestimmt die Breite, nichts wird mehr abgeschnitten.
+- Nachweis: Druck-Harness 32/32 PASS (Komposit-Logik unberührt).
+
 ## v0.21.43 — Druck wirklich zentriert (Doppelrand behoben)
 - Fehlerbehobung (Nutzer-Fund: „Das Dokument ist immer noch nicht zentriert"):
   Die Berechnung der druckbaren Fläche zog den Hardware-Rand des Druckers

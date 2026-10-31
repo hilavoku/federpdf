@@ -150,7 +150,7 @@ internal sealed class DruckDialog : Form
         BackColor = bg;
         ForeColor = textFarbe;
         Font = Ft(9.5f);
-        ClientSize = new Size(S(1080), S(940));
+        ClientSize = new Size(S(1080), S(1010));
 
         TitelzeileBauen();
         (zpanel, vorschau, zurueck, weiter, seitenZahl, vorschauInfo,
@@ -363,7 +363,7 @@ internal sealed class DruckDialog : Form
         {
             AutoScroll = true,
             Location = new Point(S(44), S(70)),
-            Size = new Size(S(660), S(620)),
+            Size = new Size(S(660), S(690)),
             BackColor = papier,
         };
         var bild = new PictureBox
@@ -403,8 +403,13 @@ internal sealed class DruckDialog : Form
             Text = "1 / 1",
             Font = Ft(10.5f),
             ForeColor = textFarbe,
-            TextAlign = ContentAlignment.MiddleCenter,
-            Size = new Size(S(110), S(34)),
+            // AutoSize + transparent: WinForms-Font-Pixel wachsen mit DPI²
+            // (pt wird mit f multipliziert UND am f*96-DPI-DC gerendert),
+            // die S()-Boxen nur mit DPI - das feste Label clippte "Seite 1 / 2"
+            // am 150-%-Notebook zu "eite 1 / i" (Nutzer-Fund). Die Breite
+            // macht der Text, die Position zentriert NavAktualisieren nach.
+            AutoSize = true,
+            BackColor = Color.Transparent,
             Location = new Point(S(317), zone.Height - S(74)),
         };
 
@@ -419,9 +424,9 @@ internal sealed class DruckDialog : Form
             BackColor = papier,
             ForeColor = textFarbe,
         };
-        var zm = Zoomk("\u2212", 500);   // −
-        var zp2 = Zoomk("+", 628);
-        var zf = Zoomk("\u2922", 670);   // Anpassen-Symbol
+        var zm = Zoomk("\u2212", 460);   // −
+        var zp2 = Zoomk("+", 646);
+        var zf = Zoomk("\u2922", 688);   // Anpassen-Symbol
         zm.FlatAppearance.BorderSize = 0; zp2.FlatAppearance.BorderSize = 0; zf.FlatAppearance.BorderSize = 0;
         zm.FlatAppearance.MouseOverBackColor = feld; zp2.FlatAppearance.MouseOverBackColor = feld; zf.FlatAppearance.MouseOverBackColor = feld;
         var zl = new Label
@@ -429,9 +434,11 @@ internal sealed class DruckDialog : Form
             Text = T("Angepasst", "Fit"),
             Font = Ft(9.5f),
             ForeColor = muted,
-            TextAlign = ContentAlignment.MiddleCenter,
-            Size = new Size(S(88), S(30)),
-            Location = new Point(S(538), zone.Height - S(73)),
+            // AutoSize + transparent: fest S(88) clippte "Angepasst" am
+            // 150-%-Display (DPI²-Falle, wie die Seitenzahl)
+            AutoSize = true,
+            BackColor = Color.Transparent,
+            Location = new Point(S(498), zone.Height - S(73)),
         };
 
         var info = new Label
@@ -439,9 +446,10 @@ internal sealed class DruckDialog : Form
             Text = "",
             Font = Ft(8.25f),
             ForeColor = muted,
-            TextAlign = ContentAlignment.MiddleCenter,
-            Size = new Size(S(500), S(20)),
-            Location = new Point(S(124), zone.Height - S(40)),
+            // AutoSize + transparent + zentriert per InfoSetzen (DPI²-Falle)
+            AutoSize = true,
+            BackColor = Color.Transparent,
+            Location = new Point(S(374), zone.Height - S(40)),
         };
         zone.Controls.Add(zr); zone.Controls.Add(zv); zone.Controls.Add(zahl);
         zone.Controls.Add(zm); zone.Controls.Add(zp2); zone.Controls.Add(zf); zone.Controls.Add(zl);
@@ -542,26 +550,13 @@ internal sealed class DruckDialog : Form
         };
         PapierListeFuellen(pf);
 
-        // Seiten pro Blatt (N-up) + Ausrichtung teilen sich eine Zeile
-        int halb = (fw - S(12)) / 2;
-        var capL = new Label
-        {
-            Text = T("Seiten pro Blatt", "Pages per sheet").ToUpper(),
-            Font = Ft(8.25f, FontStyle.Bold),
-            ForeColor = muted,
-            AutoSize = true,
-            Location = new Point(rand, y),
-        };
-        var capR = new Label
-        {
-            Text = T("Ausrichtung", "Orientation").ToUpper(),
-            Font = Ft(8.25f, FontStyle.Bold),
-            ForeColor = muted,
-            AutoSize = true,
-            Location = new Point(rand + halb + S(12), y),
-        };
-        y += S(24);
-        var pb = Kombi(); pb.Size = new Size(halb, S(34)); pb.Location = new Point(rand, y);
+        // Seiten pro Blatt (N-up) + Ausrichtung — je EIGENE Zeile: Als halbe
+        // Breite nebeneinander clappten die Ueberschriften am 150-%-Display
+        // (WinForms-Font-Pixel wachsen mit DPI², die S()-Boxen nur mit DPI —
+        // "SEITEN PRO BLATT" ueberdeckte das "A" von "AUSRICHTUNG",
+        // Nutzer-Screenshot), jetzt sicher uebereinander.
+        spalte.Controls.Add(Caption(T("Seiten pro Blatt", "Pages per sheet"), ref y, rand));
+        var pb = Kombi(); pb.Location = new Point(rand, y);
         foreach (int n in DruckLayout.SeitenProBlattWerte)
             pb.Items.Add(n == 1 ? T("1 Seite", "1 page") : string.Format(T("{0} Seiten", "{0} pages"), n));
         pb.SelectedIndex = 0;
@@ -571,7 +566,11 @@ internal sealed class DruckDialog : Form
             skalierung.Enabled = SeitenProBlatt == 1;   // Anzeige=Verhalten
             VorschauVerzoegertStarten();
         };
-        var au = Kombi(); au.Size = new Size(fw - halb - S(12), S(34)); au.Location = new Point(rand + halb + S(12), y);
+        spalte.Controls.Add(pb);
+        y += S(34 + 8);
+
+        spalte.Controls.Add(Caption(T("Ausrichtung", "Orientation"), ref y, rand));
+        var au = Kombi(); au.Location = new Point(rand, y);
         au.Items.AddRange(new object[] { T("Hochformat", "Portrait"), T("Querformat", "Landscape") });
         au.SelectedIndex = LiesQuer() ? 1 : 0;
         au.SelectedIndexChanged += (_, _) =>
@@ -580,11 +579,12 @@ internal sealed class DruckDialog : Form
             try { druckerEinstellungen.DefaultPageSettings.Landscape = au.SelectedIndex == 1; } catch { }
             VorschauVerzoegertStarten();
         };
-        spalte.Controls.Add(capL); spalte.Controls.Add(capR); spalte.Controls.Add(pb); spalte.Controls.Add(au);
+        spalte.Controls.Add(au);
         y += S(34 + 16);
 
-        // Kopien + Seitenrand teilen sich eine Zeile (halbformatig wie
-        // "Seiten pro Blatt | Ausrichtung" darueber - kostet keine Hoehe)
+        // Kopien + Seitenrand teilen sich eine Zeile (Kurzbeschriftungen, die
+        // auch bei 150-%-DPI in die halbe Breite passen - gemessen)
+        int halb = (fw - S(12)) / 2;
         var capK = new Label
         {
             Text = T("Kopien", "Copies").ToUpper(),
@@ -952,6 +952,14 @@ internal sealed class DruckDialog : Form
         vorschauVerzoegert.Start();
     }
 
+    /// <summary>Infotext setzen und um die Spaltenmitte (S(374)) zentrieren —
+    /// das Label ist AutoSize, die Position folgt dem Text (DPI²-Falle).</summary>
+    private void InfoSetzen(string text)
+    {
+        vorschauInfo.Text = text;
+        vorschauInfo.Left = S(374) - vorschauInfo.PreferredWidth / 2;
+    }
+
     private void NavAktualisieren()
     {
         int blaetter = BlattAnzahl();
@@ -962,7 +970,8 @@ internal sealed class DruckDialog : Form
         {
             vorschau.Image = null;
             seitenZahl.Text = "-";
-            vorschauInfo.Text = T("Keine Seiten gewählt.", "No pages selected.");
+            seitenZahl.Left = S(372) - seitenZahl.PreferredWidth / 2;
+            InfoSetzen(T("Keine Seiten gewählt.", "No pages selected."));
             return;
         }
         if (SeitenProBlatt == 1)
@@ -974,6 +983,7 @@ internal sealed class DruckDialog : Form
         {
             seitenZahl.Text = string.Format(T("Blatt {0} / {1}", "Sheet {0} / {1}"), vorschauPos + 1, blaetter);
         }
+        seitenZahl.Left = S(372) - seitenZahl.PreferredWidth / 2;
     }
 
     internal void VorschauLaden()
@@ -1004,7 +1014,7 @@ internal sealed class DruckDialog : Form
             vorschau.Image = BlattAnsicht(teile);
             alt?.Dispose();
             ZoomAnwenden();
-            vorschauInfo.Text = proBlatt == 1
+            InfoSetzen(proBlatt == 1
                 ? string.Format(
                     T("Vorschau · Druckauftrag: {0} {1} · Strg+Mausrad zoomt",
                       "Preview · print job: {0} {1} · Ctrl+wheel zooms"),
@@ -1013,12 +1023,12 @@ internal sealed class DruckDialog : Form
                     T("Vorschau · Druckauftrag: {0} {1} auf {2} {3} · Strg+Mausrad zoomt",
                       "Preview · print job: {0} {1} on {2} {3} · Ctrl+wheel zooms"),
                     auftrag.Count, T(auftrag.Count == 1 ? "Seite" : "Seiten", auftrag.Count == 1 ? "page" : "pages"),
-                    blaetter, T(blaetter == 1 ? "Blatt" : "Blätter", blaetter == 1 ? "sheet" : "sheets"));
+                    blaetter, T(blaetter == 1 ? "Blatt" : "Blätter", blaetter == 1 ? "sheet" : "sheets")));
         }
         catch (Exception ex)
         {
             vorschau.Image = null;
-            vorschauInfo.Text = T("Vorschau nicht möglich: ", "Preview unavailable: ") + ex.Message;
+            InfoSetzen(T("Vorschau nicht möglich: ", "Preview unavailable: ") + ex.Message);
         }
         finally
         {

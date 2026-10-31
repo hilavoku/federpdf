@@ -2,6 +2,13 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
 
+## v0.21.48 — Duplex-Begriffe vollständig lesbar
+- Nachbesserung (Nutzer-Screenshot: „Kante lang/kurz" war in der halben
+  Spaltenbreite abgeschnitten — der entscheidende Zusatz fehlte): Die
+  Einträge heißen jetzt **„Einseitig / Kante lang / Kante kurz"** — die
+  Standard-Kürzel, die auch in der geschlossenen Combo ganz lesbar sind.
+  Bedeutung und Zuordnung (lang = Kante lang, kurz = Kante kurz) unverändert.
+
 ## v0.21.47 — Zoom zur Maus + Position „Oben" für kleine Seiten
 - **Strg+Mausrad zoomt jetzt zum Mauszeiger** (Nutzer-Fund: „zoomt immer in
   die obere linke Ecke"): Der Bildpunkt unter dem Zeiger bleibt nach dem

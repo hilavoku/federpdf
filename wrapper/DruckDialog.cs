@@ -756,8 +756,10 @@ internal sealed class DruckDialog : Form
         du.Items.AddRange(new object[]
         {
             T("Einseitig", "One-sided"),
-            T("Beidseitig – Kante lang", "Two-sided – long edge"),
-            T("Beidseitig – Kante kurz", "Two-sided – short edge"),
+            // Kurzbegriffe: die halbe Spaltenbreite schluckte sonst den
+            // entscheidenden Zusatz ("Beidseitig – Kante |"), Nutzer-Fund
+            T("Kante lang", "Long edge"),
+            T("Kante kurz", "Short edge"),
         });
         du.SelectedIndex = 0;
         var pos = Kombi(); pos.Size = new Size(halb, S(34)); pos.Location = new Point(rand + halb + S(12), y);

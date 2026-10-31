@@ -2,6 +2,23 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
 
+## v0.21.50 — Farbmodus am Treiber + schnellerer Druckstart
+- **Fehlerbehobung (Nutzer-Fund: „auf Farbe gestellt, Ausdruck blieb S/W"):**
+  Der Farbmodus des Druckertreibers wurde nie mitgeschrieben — der Treiber
+  entschied selbst (und blieb ggf. auf Schwarzweiß). Die Farbwahl des
+  Dialogs setzt jetzt **PageSettings.Color** am Treiber-Objekt UND am
+  Druckauftrag (Farbe → Color an, Schwarzweiß → Color aus — letzteres
+  spoolt zusätzlich schneller).
+- **Druckstart beschleunigt (Nutzer-Fund: „dauert super lange, bis der
+  Drucker anfängt"):** Der Server lieferte die 600-dpi-Seitenbilder als
+  PNG (25–50 MB je Seite, langsam zu erzeugen und dekodieren). Der Endpunkt
+  `/api/druckseite` kennt jetzt `fmt=jpg&q=85` — der Wrapper holt JPEG
+  (typisch ~4–8 MB, mehrfach schneller erzeugt/dekodiert), bei Druck-
+  auflösung visuell nicht unterscheidbar. PNG bleibt als Default für
+  Bestand clients.
+- Server `APP_VERSION` → 0.21.50. Suite um den JPEG-Check erweitert:
+  **138 PASS** (Clone-dist und Deployment).
+
 ## v0.21.49 — Farbe/Schwarzweiß + reparierter Streifendruck
 - **Neu: Farbwahl „Farbe / Schwarzweiß"** im Druckdialog (neben der
   Ausrichtung). Bei Schwarzweiß werden die Seitenbilder entzerrt grau

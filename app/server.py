@@ -34,7 +34,7 @@ os.makedirs(SIGN_DIR, exist_ok=True)
 
 app = FastAPI(title="FederPDF")
 
-APP_VERSION = "0.21.39"   # wird im Über-Dialog (Klick auf Logo/FederPDF) angezeigt
+APP_VERSION = "0.21.50"   # wird im Über-Dialog (Klick auf Logo/FederPDF) angezeigt
 
 
 @app.middleware("http")
@@ -2315,16 +2315,23 @@ def druck_info(did: str):
 
 
 @app.get("/api/druckseite/{did}")
-def druck_seite(did: str, nr: int = 0, dpi: int = 300, annots: int = 1):
-    """Eine Seite als PNG in DRUCKaufloesung - annots=1 (Standard) mit
-    Annotationen und Formularwerten, annots=0 pures Papier ohne Signaturen/
-    Markierungen/Formulare (Druckdialog-Option). dpi geklemmt: 600 reicht
-    jedem Laser, mehr waere reiner Speicherfraß."""
+def druck_seite(did: str, nr: int = 0, dpi: int = 300, annots: int = 1,
+                fmt: str = "png", q: int = 85):
+    """Eine Seite in DRUCKaufloesung - annots=1 (Standard) mit Annotationen
+    und Formularwerten, annots=0 pures Papier ohne Signaturen/Markierungen/
+    Formulare (Druckdialog-Option). dpi geklemmt: 600 reicht jedem Laser,
+    mehr waere reiner Speicherfraß. fmt=jpg liefert JPEG (q 50..95) statt
+    PNG - bei 600 dpi ist das PNG 25-50 MB gross und laut; JPEG dekodiert
+    mehrfach schneller im Wrapper (Nutzer-Fund "der Drucker faengt erst
+    spaet an"). Visuell bei Druckaufloesung nicht unterscheidbar."""
     d = _doc(did)
     if nr < 0 or nr >= d.page_count:
         raise HTTPException(404, "Seite existiert nicht")
     dpi = max(72, min(int(dpi), 600))
     pix = d[nr].get_pixmap(dpi=dpi, annots=bool(annots))
+    if fmt in ("jpg", "jpeg"):
+        return Response(content=pix.tobytes("jpeg", jpg_quality=max(50, min(int(q), 95))),
+                        media_type="image/jpeg")
     return Response(content=pix.tobytes("png"), media_type="image/png")
 
 

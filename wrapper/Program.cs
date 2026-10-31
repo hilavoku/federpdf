@@ -508,6 +508,9 @@ internal static class Program
                 // dialog); nicht auf Fallback-Plumbing von PrintDocument vertrauen
                 try { druck.DefaultPageSettings.Landscape = ps.DefaultPageSettings.Landscape; } catch { }
                 try { druck.DefaultPageSettings.PaperSize = ps.DefaultPageSettings.PaperSize; } catch { }
+                // Farbmodus EXPLIZIT mitgeben (DMCOLOR): der Treiber entscheidet
+                // sonst selbst - Nutzer-Fund "auf Farbe gestellt, Ausdruck blieb S/W"
+                try { druck.DefaultPageSettings.Color = farbe; } catch { }
                 int index = 0;
                 druck.PrintPage += (_, ev) =>
                 {
@@ -570,8 +573,11 @@ internal static class Program
     {
         using var http = new HttpClient(new System.Net.Http.HttpClientHandler { UseProxy = false })
         { Timeout = TimeSpan.FromSeconds(30) };
+        // fmt=jpg: das 600-dpi-PNG waere 25-50 MB gross und langsam zu dekodieren —
+        // JPEG zieht den Druckstart spuerbar vor (Nutzer-Fund), bei Druckaufloesung
+        // visuell nicht unterscheidbar
         using var antwort = http.GetStreamAsync(
-            $"http://127.0.0.1:{port}/api/druckseite/{did}?nr={nr}&dpi={dpi}&annots={(annots ? 1 : 0)}").Result;
+            $"http://127.0.0.1:{port}/api/druckseite/{did}?nr={nr}&dpi={dpi}&annots={(annots ? 1 : 0)}&fmt=jpg&q=85").Result;
         using var ms = new MemoryStream();
         antwort.CopyTo(ms);
         ms.Position = 0;

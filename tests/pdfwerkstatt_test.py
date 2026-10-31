@@ -1030,6 +1030,12 @@ try:
           r.headers.get("content-type") == "image/png"
           and abs(drv.size[0] - b0 / 72.0 * 150) < 3 and abs(drv.size[1] - h0 / 72.0 * 150) < 3,
           f"{drv.size} vs {b0}x{h0}pt")
+    r = requests.get(f"{BASE}/api/druckseite/{pdid}?nr=0&dpi=150&fmt=jpg&q=85", timeout=30)
+    djv = _PILImage.open(io.BytesIO(r.content))
+    check("druckseite fmt=jpg: JPEG mit gleichen Massen",
+          r.headers.get("content-type") == "image/jpeg"
+          and abs(djv.size[0] - b0 / 72.0 * 150) < 3 and abs(djv.size[1] - h0 / 72.0 * 150) < 3,
+          f"{r.headers.get('content-type')} {djv.size}")
     # Annotationen muessen im Druckbild liegen (annots=True): Stempel setzen und
     # seine Farbe an der Stempelmitte nachweisen. Eigene Wegwerf-Signatur, denn
     # ts1 wird frueher in der Suite umbenannt.

@@ -673,6 +673,9 @@ internal sealed class DruckDialog : Form
         fa.SelectedIndexChanged += (_, _) =>
         {
             if (synchronisiere) return;
+            // Farbmodus auch am Treiber setzen - der entscheidet sonst selbst
+            // (Nutzer-Fund: Farbe gewählt, Ausdruck blieb S/W)
+            try { druckerEinstellungen.DefaultPageSettings.Color = Farbig; } catch { }
             VorschauVerzoegertStarten();
         };
         spalte.Controls.Add(capA); spalte.Controls.Add(capF);

@@ -2,6 +2,25 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
 
+## v0.21.47 — Zoom zur Maus + Position „Oben" für kleine Seiten
+- **Strg+Mausrad zoomt jetzt zum Mauszeiger** (Nutzer-Fund: „zoomt immer in
+  die obere linke Ecke"): Der Bildpunkt unter dem Zeiger bleibt nach dem
+  Zoom an derselben Bildschirmstelle, die Ansicht scrollt entsprechend mit.
+  Die Zoom-Knöpfe ‒/+ zoomen zur Fenstermitte. (Der Letterbox-Offset des
+  eingepassten Bildes fließt in die Rückrechnung ein.)
+- **Neu: Position „Mittig/Oben"** im Druckdialog (Nutzer-Wunsch): Kleine
+  Seiten — z. B. der Fahrzeugschein auf A4 — können **kopfbündig** oben am
+  Blatt gedruckt werden statt mittig. Horizontale bleibt immer zentriert,
+  die Vorschau zeigt die Wahl live, und die Einstellung wird wie der
+  Seitenrand gemerkt (einstellungen.json, „druckOben"). Die Spalte wurde
+  dafür neu geordnet: Ausrichtung|Seitenrand und Duplex|Position teilen
+  sich je eine Zeile (Kurzbeschriftungen, auch bei 150 % DPI gemessen).
+- Nachweise: Druck-Harness am Notebook — Position OBEN startet die Seite
+  an der Oberkante (Balkenprobe), MITTIG lässt dort Weiß; Zoom-Anker
+  rechnet den Scroll zur Maus (vorher {0,0}); echter Druck nach PDF
+  („quer_oben"): Bild beginnt bei y≈0, horizontal weiterhin zentriert.
+  Komplett 36 + 35 Checks PASS (beide Rechner).
+
 ## v0.21.46 — Dokument wirklich mittig: Blattursprünge korrekt
 - Fehlerbehobung (Nutzer-Fund: „linksbündig mit der Seite, aber rechts ist
   ein Rand"): Zwei spiegelbildliche Ursprungsfehler —

@@ -19,10 +19,11 @@ internal static class Program
     // Webmessage "theme|light|dark" nachgezogen (Druckdialog palettiert mit)
     private static bool uiHell;
     // Gespeicherter Druck-Seitenrand (mm, Schlüssel "druckRandMm" in
-    // einstellungen.json): Startwert beim Hochfahren lesen, nach jedem
-    // Druck-OK über /api/prefs zurückschreiben (Server bleibt alleiniger
-    // Schreiber der Datei)
+    // einstellungen.json) und Position ("druckOben": true = kopfbuendig):
+    // Startwerte beim Hochfahren lesen, nach jedem Druck-OK über /api/prefs
+    // zurückschreiben (Server bleibt alleiniger Schreiber der Datei)
     private static double druckRandMm;
+    private static bool druckOben;
 
     [STAThread]
     private static void Main(string[] args)
@@ -61,6 +62,9 @@ internal static class Program
                 if (doc.RootElement.TryGetProperty("druckRandMm", out var drm)
                     && drm.ValueKind == JsonValueKind.Number)
                     druckRandMm = Math.Clamp(drm.GetDouble(), 0, 50);
+                if (doc.RootElement.TryGetProperty("druckOben", out var dob)
+                    && (dob.ValueKind == JsonValueKind.True || dob.ValueKind == JsonValueKind.False))
+                    druckOben = dob.GetBoolean();
             }
         }
         catch { /* kaputte/kompatible Datei: Deutsch/Dunkel bleibt */ }
@@ -440,7 +444,7 @@ internal static class Program
             Image BildLader(int nr, int dpi, bool annots) => SeiteVomServer(did, nr, dpi, annots);
             var owner = webView.FindForm();
             using var dlg = new DruckDialog(seiten, aktuelleSeite, BildLader, uiSprache,
-                owner?.DeviceDpi ?? 96, uiHell, masse, druckRandMm);
+                owner?.DeviceDpi ?? 96, uiHell, masse, druckRandMm, druckOben);
             if (owner != null) dlg.ZentrierenAuf(owner);   // im DPI-Kontext des Owners erstellen
             if (dlg.ShowDialog(owner) != DialogResult.OK)
             {
@@ -455,6 +459,7 @@ internal static class Program
             double skalierung = dlg.Skalierung;
             int proBlatt = dlg.SeitenProBlatt;
             double randMm = dlg.RandMm;
+            bool oben = dlg.ObenBuendig;
             // Einstellungen inkl. Treiber-Eigenschaften (Papier/Qualitaet/Farbe
             // aus dem Druckereigenschaften-Dialog) MITNEHMEN, bevor der Dialog
             // disposed wird
@@ -464,10 +469,11 @@ internal static class Program
                 await Melden(webView, "null");
                 return;
             }
-            // Seitenrand persistieren (Best-Effort, blockiert den Druck nicht)
-            if (Math.Abs(randMm - druckRandMm) > 0.01)
+            // Seitenrand/Position persistieren (Best-Effort, blockiert den Druck nicht)
+            if (Math.Abs(randMm - druckRandMm) > 0.01 || oben != druckOben)
             {
                 druckRandMm = randMm;
+                druckOben = oben;
                 _ = Task.Run(PrefsRandSchreiben);
             }
 
@@ -528,7 +534,7 @@ internal static class Program
                             using var roh = System.Drawing.Image.FromStream(ms);
                             bilder.Add(new Bitmap(roh));
                         }
-                        BlattZeichnen(ev.Graphics!, ev.PageSettings, stapel, bilder, skalierung, proBlatt, randPt);
+                        BlattZeichnen(ev.Graphics!, ev.PageSettings, stapel, bilder, skalierung, proBlatt, randPt, oben);
                     }
                     finally { foreach (var b in bilder) b.Dispose(); }
                     ev.HasMorePages = index < liste.Count;
@@ -571,10 +577,11 @@ internal static class Program
         catch { /* UI evtl. schon geschlossen */ }
     }
 
-    /// <summary>Seitenrand in die UI-Praeferenzen schreiben: GET /api/prefs,
-    /// Schluessel "druckRandMm" setzen, POST zurueck — der Server bleibt
-    /// alleiniger Schreiber der einstellungen.json. Best-Effort: scheitert
-    /// es (Server weg, kaputtes JSON), bleibt es beim alten Stand.</summary>
+    /// <summary>Seitenrand + Position in die UI-Praeferenzen schreiben:
+    /// GET /api/prefs, Schluessel "druckRandMm"/"druckOben" setzen, POST
+    /// zurueck — der Server bleibt alleiniger Schreiber der einstellungen.json.
+    /// Best-Effort: scheitert es (Server weg, kaputtes JSON), bleibt es beim
+    /// alten Stand.</summary>
     private static void PrefsRandSchreiben()
     {
         try
@@ -585,6 +592,7 @@ internal static class Program
             var node = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject;
             if (node == null) return;
             node["druckRandMm"] = druckRandMm;
+            node["druckOben"] = druckOben;
             using var content = new StringContent(node.ToJsonString(),
                 System.Text.Encoding.UTF8, "application/json");
             http.PostAsync($"http://127.0.0.1:{port}/api/prefs", content).Wait();
@@ -605,7 +613,7 @@ internal static class Program
     /// nicht, Mess-Fund 31.10.2026).</summary>
     private static void SeiteEinpassen(Graphics g, PageSettings seite, Image bild,
                                        double bPt, double hPt, double skalierung = 0,
-                                       double randPt = 0)
+                                       double randPt = 0, bool oben = false)
     {
         g.PageUnit = GraphicsUnit.Display;
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
@@ -633,7 +641,9 @@ internal static class Program
             ? Math.Min(aw / b100, ah / h100)
             : skalierung;
         double b = b100 * skala, h = h100 * skala;
-        g.DrawImage(bild, ax + (float)((aw - b) / 2.0), ay + (float)((ah - h) / 2.0), (float)b, (float)h);
+        g.DrawImage(bild, ax + (float)((aw - b) / 2.0),
+                    ay + (float)(oben ? 0 : (ah - h) / 2.0),   // kopfbuendig auf Wunsch
+                    (float)b, (float)h);
     }
 
     /// <summary>Einen Druck-Blattbogen zeichnen (Koordinaten 1/100 Zoll):
@@ -647,7 +657,7 @@ internal static class Program
     /// Druck-Harness.</summary>
     internal static void BlattZeichnen(Graphics g, PageSettings seite,
         List<(int nr, double bPt, double hPt)> stapel, List<Image> bilder,
-        double skalierung, int proBlatt, double randPt = 0)
+        double skalierung, int proBlatt, double randPt = 0, bool oben = false)
     {
         if (stapel.Count == 0 || stapel.Count > bilder.Count) return;
         g.PageUnit = GraphicsUnit.Display;
@@ -657,7 +667,7 @@ internal static class Program
         if (proBlatt <= 1)
         {
             var (_, bPt0, hPt0) = stapel[0];
-            SeiteEinpassen(g, seite, bilder[0], bPt0, hPt0, skalierung, randPt);
+            SeiteEinpassen(g, seite, bilder[0], bPt0, hPt0, skalierung, randPt, oben);
             return;
         }
 
@@ -681,7 +691,7 @@ internal static class Program
         for (int i = 0; i < stapel.Count; i++)
         {
             var zelle = DruckLayout.Zelle(flaeche, spalten, zeilen, i);
-            var ziel = DruckLayout.SeiteInZelle(stapel[i].bPt, stapel[i].hPt, zelle, 0);
+            var ziel = DruckLayout.SeiteInZelle(stapel[i].bPt, stapel[i].hPt, zelle, 0, oben);
             g.DrawImage(bilder[i], ziel.X / 0.72f, ziel.Y / 0.72f, ziel.Width / 0.72f, ziel.Height / 0.72f);
         }
     }

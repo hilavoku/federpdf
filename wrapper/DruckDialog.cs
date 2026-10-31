@@ -26,6 +26,7 @@ internal sealed class DruckDialog : Form
     private readonly float f;                    // DPI-Faktor (dpi/96), s. S()
     private readonly double[][] masse;           // Seitenmasse in pt [b,h] je Seite
     private readonly double startRandMm;         // gespeicherter Seitenrand (mm)
+    private readonly bool startOben;             // gespeicherte Position (kopfbuendig?)
 
     // Theme-Paletten (Farben aus der Web-UI: body / body.light)
     private readonly bool hell;
@@ -34,7 +35,7 @@ internal sealed class DruckDialog : Form
     private readonly Panel zpanel;
     private readonly PictureBox vorschau;
     private readonly ComboBox drucker, duplex, skalierung;
-    private readonly ComboBox papierFormat, proBlatt, ausrichtung;   // Papierformat / N-up / Hoch-Quer
+    private readonly ComboBox papierFormat, proBlatt, ausrichtung, position;   // Papier / N-up / Hoch-Quer / Mittig-Oben
     private readonly RadioButton alles, aktuelle, bereich;
     private readonly NumericUpDown von, bis, kopien, prozent, seitenrand;
     private readonly Button zurueck, weiter, drucken, abbruch, zoomMinus, zoomPlus, zoomPassend, eigenschaften;
@@ -100,13 +101,19 @@ internal sealed class DruckDialog : Form
     /// weissen Rahmen statt flush an den Blattrand zu stossen.</summary>
     public double RandMm => (double)seitenrand.Value;
 
+    /// <summary>true = Seiteninhalt KOPFBUENDIG am Blatt (kleine Seiten wie
+    /// der Fahrzeugschein oben), false = mittig in der druckbaren Flaeche
+    /// (horizontal immer zentriert).</summary>
+    public bool ObenBuendig => position.SelectedIndex == 1;
+
     /// <param name="dpi">DeviceDpi des Owner-Fensters (Layout-Skalierung).</param>
     /// <param name="hellF">App-Theme (true = helles Design der Web-UI).</param>
     /// <param name="seitenmasse">Seitenmasse in pt je Seite (fuer die Blatt-Komposition).</param>
     /// <param name="startRandMm">Gespeicherter Seitenrand in mm (einstellungen.json).</param>
+    /// <param name="startOben">Gespeicherte Position (true = kopfbuendig).</param>
     public DruckDialog(int seitenAnzahl, int aktuelleSeite, Func<int, int, bool, Image> bildLader,
                        string uiSprache, int dpi, bool hellF, double[][] seitenmasse,
-                       double randStartMm = 0)
+                       double randStartMm = 0, bool startObenF = false)
     {
         seiten = seitenAnzahl;
         seiteBild = bildLader;
@@ -116,6 +123,7 @@ internal sealed class DruckDialog : Form
         f = Math.Max(1, dpi) / 96f;
         masse = seitenmasse;
         startRandMm = Math.Clamp(randStartMm, 0, 50);
+        startOben = startObenF;
         hell = hellF;
 
         if (hell)
@@ -155,7 +163,7 @@ internal sealed class DruckDialog : Form
         TitelzeileBauen();
         (zpanel, vorschau, zurueck, weiter, seitenZahl, vorschauInfo,
          zoomMinus, zoomPlus, zoomPassend, zoomLabel) = VorschauBauen();
-        (drucker, eigenschaften, papierFormat, proBlatt, ausrichtung, duplex, skalierung,
+        (drucker, eigenschaften, papierFormat, proBlatt, ausrichtung, position, duplex, skalierung,
          alles, aktuelle, bereich, von, bis, kopien, seitenrand, prozent,
          prozentZeile, mitAnnots, drucken, abbruch) = SpalteBauen();
 
@@ -236,12 +244,13 @@ internal sealed class DruckDialog : Form
     /// <summary>Mausrad-Umleitung (extrahiert fuer den kopflosen Test):
     /// ohne Strg = blaettern (im eingepassten Zustand) bzw. Inhalts-Scrollen
     /// (gezoomt); Strg = Zoom (Konvention; Nutzer-Fund: Zoom allein aufs Rad
-    /// war "falsch").</summary>
+    /// war "falsch") - mit der MAUSPOSITION als Anker, sonst zoomt alles in
+    /// die linke obere Ecke (Nutzer-Fund).</summary>
     internal void WheelVerarbeiten(bool strg, int delta)
     {
         if (strg)
         {
-            ZoomSchritt(delta > 0 ? 0.15 : -0.15);
+            ZoomSchritt(delta > 0 ? 0.15 : -0.15, zpanel.PointToClient(Cursor.Position));
         }
         else if (zoomF > 0)
         {
@@ -300,11 +309,59 @@ internal sealed class DruckDialog : Form
         seitenrand.Value = Math.Clamp((decimal)mm, 0, 50);
     }
 
-    private void ZoomSchritt(double delta)
+    /// <summary>Position (Mittig/Oben) ueber die ECHTE Combo setzen - intern.</summary>
+    internal void PositionWaehlen(bool oben)
     {
+        position.SelectedIndex = oben ? 1 : 0;
+    }
+
+    /// <summary>Zoom mit EXPLIZITEM Anker (Bildschirm-Punkt im zpanel) - intern
+    /// fuer den kopflosen Test (Cursor.Position ist dort nicht deterministisch).
+    /// Rueckgabe: der BERECHNETE Scroll (AutoScrollPosition ist auf unsichtbaren
+    /// Test-Fenstern ein No-op, im echten Fenster bewährt).</summary>
+    internal Point ZoomMitAnkerFuerTest(double delta, Point ankerPanel)
+    {
+        ZoomSchritt(delta, ankerPanel);
+        return letzterScrollFuerTest;
+    }
+
+    internal Point VorschauScrollFuerTest => zpanel.AutoScrollPosition;
+
+    /// <summary>Zoomschritt: Der Bildpunkt UNTER DEM ANKER (Mausposition,
+    /// ohne Angabe die Mitte des Sichtfensters) bleibt nach dem Rescale an
+    /// derselben Bildschirmstelle - Zoom-in-die-Ecke (Nutzer-Fund) ist damit
+    /// weg. SizeMode.Zoom zentriert das Bild im Control (Letterbox-Offset
+    /// fliesst in die Rueckrechnung ein).</summary>
+    private void ZoomSchritt(double delta, Point? anker = null)
+    {
+        var img = vorschau.Image;
+        if (img == null) return;
+        Point m = anker ?? new Point(zpanel.ClientSize.Width / 2, zpanel.ClientSize.Height / 2);
+        double skalaAlt = zoomF <= 0
+            ? Math.Min((double)zpanel.ClientSize.Width / img.Width,
+                       (double)zpanel.ClientSize.Height / img.Height)
+            : (double)vorschau.Width / img.Width;
+        // Letterbox-Offset: im Fit-Zustand (Dock=Fill) ueber das PANEL rechnen
+        // - das Control selbst kann vor der Realisierung noch Default-Masse haben
+        double offX = zoomF <= 0 ? (zpanel.ClientSize.Width - img.Width * skalaAlt) / 2.0 : 0.0;
+        double offY = zoomF <= 0 ? (zpanel.ClientSize.Height - img.Height * skalaAlt) / 2.0 : 0.0;
+        double ox = (m.X - vorschau.Location.X - offX) / skalaAlt;   // Bildpunkt unterm Anker
+        double oy = (m.Y - vorschau.Location.Y - offY) / skalaAlt;
+
         zoomF = Math.Clamp((zoomF <= 0 ? 1.0 : zoomF) + delta, 0.3, 4.0);
         ZoomAnwenden();
+
+        if (zoomF > 0)
+        {
+            double skalaNeu = (double)vorschau.Width / img.Width;
+            int nx = (int)Math.Round(ox * skalaNeu - m.X);
+            int ny = (int)Math.Round(oy * skalaNeu - m.Y);
+            letzterScrollFuerTest = new Point(nx, ny);
+            zpanel.AutoScrollPosition = new Point(Math.Max(0, nx), Math.Max(0, ny));
+        }
     }
+
+    private Point letzterScrollFuerTest;   // Diagnose fuer den kopflosen Test
 
     // ---------------------------------------------------------------- Titelzeile
     private void TitelzeileBauen()
@@ -459,7 +516,7 @@ internal sealed class DruckDialog : Form
     }
 
     // ---------------------------------------------------------------- Spalte rechts
-    private (ComboBox, Button, ComboBox, ComboBox, ComboBox, ComboBox, ComboBox,
+    private (ComboBox, Button, ComboBox, ComboBox, ComboBox, ComboBox, ComboBox, ComboBox,
              RadioButton, RadioButton, RadioButton,
              NumericUpDown, NumericUpDown, NumericUpDown, NumericUpDown, NumericUpDown,
              Panel, CheckBox, Button, Button) SpalteBauen()
@@ -569,25 +626,12 @@ internal sealed class DruckDialog : Form
         spalte.Controls.Add(pb);
         y += S(34 + 8);
 
-        spalte.Controls.Add(Caption(T("Ausrichtung", "Orientation"), ref y, rand));
-        var au = Kombi(); au.Location = new Point(rand, y);
-        au.Items.AddRange(new object[] { T("Hochformat", "Portrait"), T("Querformat", "Landscape") });
-        au.SelectedIndex = LiesQuer() ? 1 : 0;
-        au.SelectedIndexChanged += (_, _) =>
-        {
-            if (synchronisiere) return;
-            try { druckerEinstellungen.DefaultPageSettings.Landscape = au.SelectedIndex == 1; } catch { }
-            VorschauVerzoegertStarten();
-        };
-        spalte.Controls.Add(au);
-        y += S(34 + 16);
-
-        // Kopien + Seitenrand teilen sich eine Zeile (Kurzbeschriftungen, die
-        // auch bei 150-%-DPI in die halbe Breite passen - gemessen)
+        // Ausrichtung + Seitenrand teilen sich eine Zeile (Kurzbeschriftungen,
+        // die auch bei 150-%-DPI in die halbe Breite passen - gemessen)
         int halb = (fw - S(12)) / 2;
-        var capK = new Label
+        var capA = new Label
         {
-            Text = T("Kopien", "Copies").ToUpper(),
+            Text = T("Ausrichtung", "Orientation").ToUpper(),
             Font = Ft(8.25f, FontStyle.Bold),
             ForeColor = muted,
             AutoSize = true,
@@ -602,19 +646,19 @@ internal sealed class DruckDialog : Form
             Location = new Point(rand + halb + S(12), y),
         };
         y += S(24);
-        var ko = new NumericUpDown
+        var au = Kombi(); au.Size = new Size(halb, S(34)); au.Location = new Point(rand, y);
+        au.Items.AddRange(new object[] { T("Hochformat", "Portrait"), T("Querformat", "Landscape") });
+        au.SelectedIndex = LiesQuer() ? 1 : 0;
+        au.SelectedIndexChanged += (_, _) =>
         {
-            Location = new Point(rand, y),
-            Size = new Size(S(120), S(32)),
-            Minimum = 1, Maximum = 99, Value = 1,
-            BackColor = feld, ForeColor = textFarbe, BorderStyle = BorderStyle.None,
-            Font = Ft(10.5f),
-            TextAlign = HorizontalAlignment.Center,
+            if (synchronisiere) return;
+            try { druckerEinstellungen.DefaultPageSettings.Landscape = au.SelectedIndex == 1; } catch { }
+            VorschauVerzoegertStarten();
         };
         var sr = new NumericUpDown
         {
             Location = new Point(rand + halb + S(12), y),
-            Size = new Size(S(64), S(32)),
+            Size = new Size(S(64), S(34)),
             Minimum = 0, Maximum = 50,
             Value = Math.Clamp((decimal)startRandMm, 0, 50),
             BackColor = feld, ForeColor = textFarbe, BorderStyle = BorderStyle.None,
@@ -627,9 +671,23 @@ internal sealed class DruckDialog : Form
             Location = new Point(rand + halb + S(12) + S(70), y + S(7)),
         };
         sr.ValueChanged += (_, _) => VorschauVerzoegertStarten();   // Randwechsel sofort sichtbar
-        spalte.Controls.Add(capK); spalte.Controls.Add(capS);
-        spalte.Controls.Add(ko); spalte.Controls.Add(sr); spalte.Controls.Add(srL);
-        y += S(32 + 20);
+        spalte.Controls.Add(capA); spalte.Controls.Add(capS);
+        spalte.Controls.Add(au); spalte.Controls.Add(sr); spalte.Controls.Add(srL);
+        y += S(34 + 20);
+
+        // Kopien (volle Zeile - der Seitenrand wohnt neben der Ausrichtung)
+        spalte.Controls.Add(Caption(T("Kopien", "Copies"), ref y, rand));
+        var ko = new NumericUpDown
+        {
+            Location = new Point(rand, y),
+            Size = new Size(S(120), S(34)),
+            Minimum = 1, Maximum = 99, Value = 1,
+            BackColor = feld, ForeColor = textFarbe, BorderStyle = BorderStyle.None,
+            Font = Ft(10.5f),
+            TextAlign = HorizontalAlignment.Center,
+        };
+        spalte.Controls.Add(ko);
+        y += S(34 + 20);
 
         spalte.Controls.Add(Caption(T("Seiten", "Pages"), ref y, rand));
         y += S(6);
@@ -674,8 +732,27 @@ internal sealed class DruckDialog : Form
         spalte.Controls.Add(chk);
         y += S(48 + 14);
 
-        spalte.Controls.Add(Caption(T("Duplex", "Duplex"), ref y, rand));
-        var du = Kombi(); du.Location = new Point(rand, y);
+        // Duplex + Position (vertikale Lage des Seiteninhalts: kleine Seiten
+        // wie der Fahrzeugschein koennen KOPFBUENDIG statt mittig gedruckt
+        // werden - Nutzer-Wunsch) teilen sich eine Zeile
+        var capD = new Label
+        {
+            Text = T("Duplex", "Duplex").ToUpper(),
+            Font = Ft(8.25f, FontStyle.Bold),
+            ForeColor = muted,
+            AutoSize = true,
+            Location = new Point(rand, y),
+        };
+        var capP = new Label
+        {
+            Text = T("Position", "Position").ToUpper(),
+            Font = Ft(8.25f, FontStyle.Bold),
+            ForeColor = muted,
+            AutoSize = true,
+            Location = new Point(rand + halb + S(12), y),
+        };
+        y += S(24);
+        var du = Kombi(); du.Size = new Size(halb, S(34)); du.Location = new Point(rand, y);
         du.Items.AddRange(new object[]
         {
             T("Einseitig", "One-sided"),
@@ -683,7 +760,16 @@ internal sealed class DruckDialog : Form
             T("Beidseitig – Kante kurz", "Two-sided – short edge"),
         });
         du.SelectedIndex = 0;
-        spalte.Controls.Add(du);
+        var pos = Kombi(); pos.Size = new Size(halb, S(34)); pos.Location = new Point(rand + halb + S(12), y);
+        pos.Items.AddRange(new object[] { T("Mittig", "Centered"), T("Oben", "Top") });
+        pos.SelectedIndex = startOben ? 1 : 0;
+        pos.SelectedIndexChanged += (_, _) =>
+        {
+            if (synchronisiere) return;
+            VorschauVerzoegertStarten();
+        };
+        spalte.Controls.Add(capD); spalte.Controls.Add(capP);
+        spalte.Controls.Add(du); spalte.Controls.Add(pos);
         y += S(34 + 20);
 
         spalte.Controls.Add(Caption(T("Skalierung", "Scaling"), ref y, rand));
@@ -748,7 +834,7 @@ internal sealed class DruckDialog : Form
         };
 
         Controls.Add(spalte);
-        return (cb, eg, pf, pb, au, du, sk, ra, rk, rb, vn, bs, ko, sr, pzFeld, pz, chk, ok, ab);
+        return (cb, eg, pf, pb, au, pos, du, sk, ra, rk, rb, vn, bs, ko, sr, pzFeld, pz, chk, ok, ab);
     }
 
     private Label Caption(string text, ref int y, int rand)
@@ -868,7 +954,7 @@ internal sealed class DruckDialog : Form
         {
             var (bild, bPt, hPt) = seiten[i];
             var zelle = seiten.Count == 1 ? druckbar : DruckLayout.Zelle(druckbar, spalten, zeilen, i);
-            var ziel = DruckLayout.SeiteInZelle(bPt, hPt, zelle, skal);   // keine Auto-Drehung (v0.21.41)
+            var ziel = DruckLayout.SeiteInZelle(bPt, hPt, zelle, skal, ObenBuendig);   // keine Auto-Drehung (v0.21.41)
             g.DrawImage(bild, ziel);
             // Seitenkontur: weiße Seiten waeren auf weißem Blatt unsichtbar -
             // die dezente Umrandung macht Zellen/Skalierung immer sichtbar.

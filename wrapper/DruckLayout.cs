@@ -128,13 +128,15 @@ internal static class DruckLayout
 
     /// <summary>Eine Seite in eine Zelle einpassen (gleiche Einheit fuer Seite
     /// und Zelle - pt fuer die Vorschau, 1/100 Zoll im Druck): Seitenverhaeltnis
-    /// erhalten, zentriert. KEINE automatische Drehung (v0.21.41, Nutzer-Fund
-    /// "Fahrzeugschein wird um 90 Grad gedreht") - Seiten drucken IMMER so, wie
-    /// sie angezeigt werden; das Blattformat steuert die Ausrichtungs-Combo.
-    /// Fester Massstab (&gt; 0) zentriert ohne Anpassung, Ueberhaenge clippt
-    /// das Blatt wie der Treiber das Papier.</summary>
+    /// erhalten, horizontal zentriert, vertikal mittig - oder bei oben=true
+    /// KOPFBUENDIG an die Zell-Oberkante (Nutzer-Wunsch: kleine Seiten wie der
+    /// Fahrzeugschein oben am Blatt statt mittig). KEINE automatische Drehung
+    /// (v0.21.41, Nutzer-Fund "Fahrzeugschein wird um 90 Grad gedreht") - Seiten
+    /// drucken IMMER so, wie sie angezeigt werden; das Blattformat steuert die
+    /// Ausrichtungs-Combo. Fester Massstab (&gt; 0) passt sich nicht an,
+    /// Ueberhaenge clippt das Blatt wie der Treiber das Papier.</summary>
     public static RectangleF SeiteInZelle(double seiteB, double seiteH,
-                                          RectangleF zelle, double skalierung)
+                                          RectangleF zelle, double skalierung, bool oben = false)
     {
         double skala = skalierung > 0
             ? skalierung
@@ -142,7 +144,7 @@ internal static class DruckLayout
         double b = seiteB * skala, h = seiteH * skala;
         return new RectangleF(
             zelle.X + (float)((zelle.Width - b) / 2.0),
-            zelle.Y + (float)((zelle.Height - h) / 2.0),
+            oben ? zelle.Y : zelle.Y + (float)((zelle.Height - h) / 2.0),
             (float)b, (float)h);
     }
 }

@@ -445,6 +445,7 @@ internal static class Program
             var duplex = dlg.DuplexModus;
             bool mitAnnots = dlg.MitAnnots;
             double skalierung = dlg.Skalierung;
+            int proBlatt = dlg.SeitenProBlatt;
             // Einstellungen inkl. Treiber-Eigenschaften (Papier/Qualitaet/Farbe
             // aus dem Druckereigenschaften-Dialog) MITNEHMEN, bevor der Dialog
             // disposed wird
@@ -474,20 +475,46 @@ internal static class Program
 
                 using var druck = new PrintDocument { PrinterSettings = ps };
                 druck.DefaultPageSettings.Margins = new Margins(0, 0, 0, 0);
+                // Papierformat/Ausrichtung EXPLIZIT uebernehmen - der Druckdialog
+                // schreibt sie in ps.DefaultPageSettings (Combos UND Treiber-
+                // dialog); nicht auf Fallback-Plumbing von PrintDocument vertrauen
+                try { druck.DefaultPageSettings.Landscape = ps.DefaultPageSettings.Landscape; } catch { }
+                try { druck.DefaultPageSettings.PaperSize = ps.DefaultPageSettings.PaperSize; } catch { }
                 int index = 0;
                 druck.PrintPage += (_, ev) =>
                 {
                     if (index >= liste.Count) { ev.HasMorePages = false; return; }
-                    int nr = liste[index++];
+                    // EIN Blatt = bis zu proBlatt Auftragsseiten (N-up)
+                    int bis = Math.Min(liste.Count, index + proBlatt);
+                    var stapel = new List<(int nr, double bPt, double hPt)>();
+                    for (int i = index; i < bis; i++)
+                    {
+                        int nr = liste[i];
+                        stapel.Add((nr, masse[nr][0], masse[nr][1]));
+                    }
+                    index = bis;
                     using var http = new HttpClient(new System.Net.Http.HttpClientHandler { UseProxy = false })
                     { Timeout = TimeSpan.FromSeconds(120) };
-                    using var antwort = http.GetStreamAsync(
-                        $"http://127.0.0.1:{port}/api/druckseite/{did}?nr={nr}&dpi={dpi}&annots={(mitAnnots ? 1 : 0)}").Result;
-                    using var ms = new MemoryStream();
-                    antwort.CopyTo(ms);
-                    ms.Position = 0;
-                    using var bild = System.Drawing.Image.FromStream(ms);
-                    SeiteEinpassen(ev.Graphics, ev.PageSettings, bild, masse[nr][0], masse[nr][1], skalierung);
+                    // KOPIEN der Seitenbilder (new Bitmap): GDI+ liest Image.FromStream
+                    // traege aus dem Stream - die hier sofort geschlossenen Streams
+                    // waeren beim spaeteren Malvorgang weg -> AccessViolation
+                    // (Nutzer-Fund 22.10., s. SeiteVomServer)
+                    var bilder = new List<Image>();
+                    try
+                    {
+                        foreach (var (nr, _, _) in stapel)
+                        {
+                            using var antwort = http.GetStreamAsync(
+                                $"http://127.0.0.1:{port}/api/druckseite/{did}?nr={nr}&dpi={dpi}&annots={(mitAnnots ? 1 : 0)}").Result;
+                            using var ms = new MemoryStream();
+                            antwort.CopyTo(ms);
+                            ms.Position = 0;
+                            using var roh = System.Drawing.Image.FromStream(ms);
+                            bilder.Add(new Bitmap(roh));
+                        }
+                        BlattZeichnen(ev.Graphics!, ev.PageSettings, stapel, bilder, skalierung, proBlatt);
+                    }
+                    finally { foreach (var b in bilder) b.Dispose(); }
                     ev.HasMorePages = index < liste.Count;
                 };
                 druck.Print();
@@ -534,7 +561,9 @@ internal static class Program
     /// Drehung bei Hoch/Quer-Kollision, wie jeder PDF-Viewer); jeder andere
     /// Wert = fester Faktor (1,0 = tatsaechliche Groesse) OHNE Drehung -
     /// Ueberhaenge clippt der Treiber wie bei Acrobat. Koordinaten in
-    /// 1/100 Zoll - GraphicsUnit.Display ist beim Drucker genau das.</summary>
+    /// 1/100 Zoll - GraphicsUnit.Display ist beim Drucker genau das. Die
+    /// Flaeche kommt orientierungskorrigiert aus DruckLayout (PrintableArea
+    /// folgt der Landscape-DEVMODE nicht, Mess-Fund 31.10.2026).</summary>
     private static void SeiteEinpassen(Graphics g, PageSettings seite, Image bild,
                                        double bPt, double hPt, double skalierung = 0)
     {
@@ -542,12 +571,13 @@ internal static class Program
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
         g.SmoothingMode = SmoothingMode.HighQuality;
 
-        var druckbar = seite.PrintableArea;   // 1/100 Zoll, Hardware-Raender abgezogen
-        float ax = Math.Max(0f, druckbar.X), ay = Math.Max(0f, druckbar.Y);
-        float aw = Math.Max(1f, druckbar.Width - ax), ah = Math.Max(1f, druckbar.Height - ay);
+        // Druckbare Flaeche in pt (korrigiert), zum Zeichnen nach 1/100 Zoll
+        var druckbar = DruckLayout.DruckbareFlaeche(seite, seite.Bounds.Width * 0.72, seite.Bounds.Height * 0.72);
+        float ax = druckbar.X / 0.72f, ay = druckbar.Y / 0.72f;
+        float aw = Math.Max(1f, druckbar.Width / 0.72f), ah = Math.Max(1f, druckbar.Height / 0.72f);
 
         bool passend = skalierung <= 0;
-        bool gleich = (bPt > hPt) == (druckbar.Width > druckbar.Height);
+        bool gleich = (bPt > hPt) == (aw > ah);
         if (passend && !gleich) bild.RotateFlip(RotateFlipType.Rotate90FlipNone);
         double bZoll = (passend && !gleich ? hPt : bPt) / 72.0;
         double hZoll = (passend && !gleich ? bPt : hPt) / 72.0;
@@ -556,6 +586,43 @@ internal static class Program
             : skalierung;
         double b = bZoll * 100.0 * skala, h = hZoll * 100.0 * skala;
         g.DrawImage(bild, ax + (float)((aw - b) / 2.0), ay + (float)((ah - h) / 2.0), (float)b, (float)h);
+    }
+
+    /// <summary>Einen Druck-Blattbogen zeichnen (Koordinaten 1/100 Zoll):
+    /// 1 Seite pro Blatt nutzt den bewaehrten SeiteEinpass-Pfad (mit fester
+    /// Skalierung, falls gewaehlt); mehrere Seiten werden als N-up-Gitter
+    /// (DruckLayout) komponiert - jede Zelle einpassend mit derselben
+    /// Dreh-Regel wie die Vorschau ("Vorschau = Druck"). Internal fuer den
+    /// kopflosen Druck-Harness.</summary>
+    internal static void BlattZeichnen(Graphics g, PageSettings seite,
+        List<(int nr, double bPt, double hPt)> stapel, List<Image> bilder,
+        double skalierung, int proBlatt)
+    {
+        if (stapel.Count == 0 || stapel.Count > bilder.Count) return;
+        g.PageUnit = GraphicsUnit.Display;
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        g.SmoothingMode = SmoothingMode.HighQuality;
+
+        if (proBlatt <= 1)
+        {
+            var (_, bPt0, hPt0) = stapel[0];
+            SeiteEinpassen(g, seite, bilder[0], bPt0, hPt0, skalierung);
+            return;
+        }
+
+        // Druckbare Flaeche in pt, orientierungskorrigiert (PrintableArea folgt
+        // der Landscape-DEVMODE nicht, Mess-Fund 31.10.2026); Zellen/Seiten in
+        // pt rechnen, Ziel-Rects zum Zeichnen nach 1/100 Zoll (/0,72)
+        var flaeche = DruckLayout.DruckbareFlaeche(seite, seite.Bounds.Width * 0.72, seite.Bounds.Height * 0.72);
+        var (spalten, zeilen) = DruckLayout.Gitter(stapel.Count, flaeche.Width, flaeche.Height,
+                                                   stapel[0].bPt, stapel[0].hPt);
+        for (int i = 0; i < stapel.Count; i++)
+        {
+            var zelle = DruckLayout.Zelle(flaeche, spalten, zeilen, i);
+            var (ziel, drehen) = DruckLayout.SeiteInZelle(stapel[i].bPt, stapel[i].hPt, zelle, 0);
+            if (drehen) bilder[i].RotateFlip(RotateFlipType.Rotate90FlipNone);
+            g.DrawImage(bilder[i], ziel.X / 0.72f, ziel.Y / 0.72f, ziel.Width / 0.72f, ziel.Height / 0.72f);
+        }
     }
 
     private static int GetFreePort()

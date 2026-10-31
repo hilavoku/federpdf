@@ -5,10 +5,13 @@ using System.Runtime.InteropServices;
 namespace FederPDF;
 
 /// <summary>Druckdialog im PDFgear-Stil: GROSSE, ZOOMBARE Seitenvorschau links
-/// (Mausrad/Zoomknöpfe; die Seite wird auf dem Blatt komponiert, exakt wie der
-/// Druck sie platziert - Skalierungswechsel sofort sichtbar), Einstellungs-
-/// spalte rechts mit Drucker, Kopien, Seitenbereich, "Signaturen/Markierungen/
-/// Formulare drucken" (auch OHNE druckbar), Duplex und Skalierung. Folgt dem
+/// (Mausrad/Zoomknöpfe; die Seiten werden auf dem ECHTEN Blatt des gewählten
+/// Druckers komponiert, exakt wie der Druck sie platziert), Einstellungs-
+/// spalte rechts mit Drucker, Papierformat, Seiten pro Blatt (N-up),
+/// Ausrichtung, Kopien, Seitenbereich, "Signaturen/Markierungen/Formulare
+/// drucken" (auch OHNE druckbar), Duplex und Skalierung. Eine Quelle der
+/// Wahrheit ist druckerEinstellungen.DefaultPageSettings (Papier/Ausrichtung):
+/// Combos, Treiberdialog und Druckauftrag lesen/schreiben dort. Folgt dem
 /// App-Theme (hell/dunkel aus der Web-UI-Palette). Rahmenlos wie das Haupt-
 /// fenster. DPI: KEIN WinForms-AutoScale (reskalierte den Dialog bei DPI-
 /// Wechsel physisch, 144→96 = 2/3, Mess-Fund 22.10.2026) - Layout wird mit
@@ -30,6 +33,7 @@ internal sealed class DruckDialog : Form
     private readonly Panel zpanel;
     private readonly PictureBox vorschau;
     private readonly ComboBox drucker, duplex, skalierung;
+    private readonly ComboBox papierFormat, proBlatt, ausrichtung;   // Papierformat / N-up / Hoch-Quer
     private readonly RadioButton alles, aktuelle, bereich;
     private readonly NumericUpDown von, bis, kopien, prozent;
     private readonly Button zurueck, weiter, drucken, abbruch, zoomMinus, zoomPlus, zoomPassend, eigenschaften;
@@ -41,7 +45,10 @@ internal sealed class DruckDialog : Form
     // dialog (DocumentProperties/DEVMODE) und wendet die Auswahl HIER an -
     // Paperformat/Qualitaet/Farbe fliessen so in den Druck (PDFgear-Art).
     private PrinterSettings druckerEinstellungen = new();
-    private int vorschauPos;                     // Index in auftrag
+    // Guard fuer programmatische Combo-Setzungen (Papierliste fuellen,
+    // Treiber-Sync): die Handler sollen beim Befuellen NICHT zurueckfeuern
+    private bool synchronisiere;
+    private int vorschauPos;                     // Blatt-Index (Seiten pro Blatt)
     private double zoomF = 0;                    // 0 = eingepasst, sonst Faktor
     // Vorschau-Debounce: jeder Wertwechsel (Seitenbereich-Pfeile! Skalierung,
     // Annots) loeste SYNCHRON einen HTTP-Abruf auf dem UI-Thread aus - bei
@@ -70,13 +77,21 @@ internal sealed class DruckDialog : Form
         2 => Duplex.Horizontal,    // Kante kurz
         _ => Duplex.Simplex,
     };
-    /// <summary>skalierung 0 = einpassen; sonst Faktor (1,0 = tatsaechliche Groesse).</summary>
-    public double Skalierung => skalierung.SelectedIndex switch
+    /// <summary>skalierung 0 = einpassen; sonst Faktor (1,0 = tatsaechliche
+    /// Groesse). Bei mehreren Seiten pro Blatt immer Einpassen - ein fester
+    /// Massstab pro Zelle ist sinnleer (die Combo ist dann gesperrt).</summary>
+    public double Skalierung => SeitenProBlatt > 1 ? 0.0 : skalierung.SelectedIndex switch
     {
         1 => 1.0,
         2 => (double)prozent.Value / 100.0,
         _ => 0.0,
     };
+
+    /// <summary>Seiten pro Blatt (1/2/4/6/9/16) - N-up-Druck.</summary>
+    public int SeitenProBlatt
+        => proBlatt.SelectedIndex >= 0
+            ? DruckLayout.SeitenProBlattWerte[proBlatt.SelectedIndex]
+            : 1;
 
     /// <param name="dpi">DeviceDpi des Owner-Fensters (Layout-Skalierung).</param>
     /// <param name="hellF">App-Theme (true = helles Design der Web-UI).</param>
@@ -125,12 +140,13 @@ internal sealed class DruckDialog : Form
         BackColor = bg;
         ForeColor = textFarbe;
         Font = Ft(9.5f);
-        ClientSize = new Size(S(1080), S(800));
+        ClientSize = new Size(S(1080), S(940));
 
         TitelzeileBauen();
         (zpanel, vorschau, zurueck, weiter, seitenZahl, vorschauInfo,
          zoomMinus, zoomPlus, zoomPassend, zoomLabel) = VorschauBauen();
-        (drucker, eigenschaften, duplex, skalierung, alles, aktuelle, bereich, von, bis, kopien, prozent,
+        (drucker, eigenschaften, papierFormat, proBlatt, ausrichtung, duplex, skalierung,
+         alles, aktuelle, bereich, von, bis, kopien, prozent,
          prozentZeile, mitAnnots, drucken, abbruch) = SpalteBauen();
 
         drucken.Click += (_, _) => { DialogResult = DialogResult.OK; Close(); };
@@ -227,6 +243,45 @@ internal sealed class DruckDialog : Form
         }
     }
 
+    // ---------------------------------------------------------------- kopfloser Test
+    /// <summary>Drucker per Namen waehlen (feuert den normalen Wechsel-Pfad:
+    /// frische PrinterSettings, Papierliste, Ausrichtung, Vorschau) - intern
+    /// fuer den kopflosen Test.</summary>
+    internal void DruckerWaehlen(string name)
+    {
+        drucker.SelectedItem = name;
+    }
+
+    internal Image? VorschauBildFuerTest => vorschau.Image;
+
+    internal int VorschauPosFuerTest => vorschauPos;
+    internal bool SkalierungAktivFuerTest => skalierung.Enabled;
+    internal int AusrichtungFuerTest => ausrichtung.SelectedIndex;
+    internal int PapierFormateFuerTest => papierFormat.Items.Count;
+    internal string PapierAktuellFuerTest => (papierFormat.SelectedItem as PaperSize)?.PaperName ?? "";
+
+    /// <summary>Ausrichtung ueber die ECHTE Combo setzen (feuert den normalen
+    /// Pfad: DefaultPageSettings + Vorschau) - intern fuer den kopflosen Test.</summary>
+    internal void AusrichtungWaehlen(bool quer)
+    {
+        ausrichtung.SelectedIndex = quer ? 1 : 0;
+    }
+
+    /// <summary>"Seiten pro Blatt" ueber die ECHTE Combo setzen - intern.</summary>
+    internal void SeitenProBlattWaehlen(int n)
+    {
+        int ix = Array.IndexOf(DruckLayout.SeitenProBlattWerte, n);
+        if (ix >= 0) proBlatt.SelectedIndex = ix;
+    }
+
+    /// <summary>Papierformat ueber die ECHTE Combo setzen - intern.</summary>
+    internal void PapierWaehlen(string papierName)
+    {
+        int ix = papierFormat.Items.Cast<PaperSize>().ToList()
+            .FindIndex(f => f.PaperName == papierName);
+        if (ix >= 0) papierFormat.SelectedIndex = ix;
+    }
+
     private void ZoomSchritt(double delta)
     {
         zoomF = Math.Clamp((zoomF <= 0 ? 1.0 : zoomF) + delta, 0.3, 4.0);
@@ -290,7 +345,7 @@ internal sealed class DruckDialog : Form
         {
             AutoScroll = true,
             Location = new Point(S(44), S(70)),
-            Size = new Size(S(660), S(520)),
+            Size = new Size(S(660), S(620)),
             BackColor = papier,
         };
         var bild = new PictureBox
@@ -378,7 +433,8 @@ internal sealed class DruckDialog : Form
     }
 
     // ---------------------------------------------------------------- Spalte rechts
-    private (ComboBox, Button, ComboBox, ComboBox, RadioButton, RadioButton, RadioButton,
+    private (ComboBox, Button, ComboBox, ComboBox, ComboBox, ComboBox, ComboBox,
+             RadioButton, RadioButton, RadioButton,
              NumericUpDown, NumericUpDown, NumericUpDown, NumericUpDown,
              Panel, CheckBox, Button, Button) SpalteBauen()
     {
@@ -417,10 +473,15 @@ internal sealed class DruckDialog : Form
         catch { }
         spalte.Controls.Add(cb);
         // Einstellungen folgen der Auswahl (nur Name - Treiberabfragen erst
-        // beim Eigenschaften-Knopf bzw. im Druck-Background-Task)
+        // beim Eigenschaften-Knopf bzw. im Druck-Background-Task). Papier-
+        // formate/Hoch-Quer des neuen Druckers uebernehmen, Vorschau aktualisieren.
         cb.SelectedIndexChanged += (_, _) =>
         {
-            if (cb.SelectedItem is string name) druckerEinstellungen = new PrinterSettings { PrinterName = name };
+            if (cb.SelectedItem is not string name) return;
+            druckerEinstellungen = new PrinterSettings { PrinterName = name };
+            PapierListeFuellen(papierFormat);
+            AusrichtungSynchronisieren();
+            if (IsHandleCreated) VorschauVerzoegertStarten();
         };
         if (cb.SelectedItem is string startName)
             druckerEinstellungen = new PrinterSettings { PrinterName = startName };
@@ -445,6 +506,64 @@ internal sealed class DruckDialog : Form
         eg.Click += (_, _) => TreiberEigenschaftenZeigen();
         spalte.Controls.Add(eg);
         y += S(30 + 16);
+
+        // Papierformat: Formate des GEWAEHLTEN Druckers (Nur-Namen-Daten,
+        // KEINE Statusabfragen - Pitfall schlafende Netzwerkdrucker). Eine
+        // Quelle der Wahrheit: druckerEinstellungen.DefaultPageSettings -
+        // die Combo spiegelt sie, der Treiberdialog schreibt hinein
+        // (SetHdevmode), der Druck liest sie.
+        spalte.Controls.Add(Caption(T("Papierformat", "Paper size"), ref y, rand));
+        var pf = Kombi(); pf.Location = new Point(rand, y);
+        spalte.Controls.Add(pf);
+        y += S(34 + 8);
+        pf.SelectedIndexChanged += (_, _) =>
+        {
+            if (synchronisiere || pf.SelectedItem is not PaperSize gewaehlt) return;
+            try { druckerEinstellungen.DefaultPageSettings.PaperSize = gewaehlt; } catch { }
+            VorschauVerzoegertStarten();
+        };
+        PapierListeFuellen(pf);
+
+        // Seiten pro Blatt (N-up) + Ausrichtung teilen sich eine Zeile
+        int halb = (fw - S(12)) / 2;
+        var capL = new Label
+        {
+            Text = T("Seiten pro Blatt", "Pages per sheet").ToUpper(),
+            Font = Ft(8.25f, FontStyle.Bold),
+            ForeColor = muted,
+            AutoSize = true,
+            Location = new Point(rand, y),
+        };
+        var capR = new Label
+        {
+            Text = T("Ausrichtung", "Orientation").ToUpper(),
+            Font = Ft(8.25f, FontStyle.Bold),
+            ForeColor = muted,
+            AutoSize = true,
+            Location = new Point(rand + halb + S(12), y),
+        };
+        y += S(24);
+        var pb = Kombi(); pb.Size = new Size(halb, S(34)); pb.Location = new Point(rand, y);
+        foreach (int n in DruckLayout.SeitenProBlattWerte)
+            pb.Items.Add(n == 1 ? T("1 Seite", "1 page") : string.Format(T("{0} Seiten", "{0} pages"), n));
+        pb.SelectedIndex = 0;
+        pb.SelectedIndexChanged += (_, _) =>
+        {
+            if (synchronisiere) return;
+            skalierung.Enabled = SeitenProBlatt == 1;   // Anzeige=Verhalten
+            VorschauVerzoegertStarten();
+        };
+        var au = Kombi(); au.Size = new Size(fw - halb - S(12), S(34)); au.Location = new Point(rand + halb + S(12), y);
+        au.Items.AddRange(new object[] { T("Hochformat", "Portrait"), T("Querformat", "Landscape") });
+        au.SelectedIndex = LiesQuer() ? 1 : 0;
+        au.SelectedIndexChanged += (_, _) =>
+        {
+            if (synchronisiere) return;
+            try { druckerEinstellungen.DefaultPageSettings.Landscape = au.SelectedIndex == 1; } catch { }
+            VorschauVerzoegertStarten();
+        };
+        spalte.Controls.Add(capL); spalte.Controls.Add(capR); spalte.Controls.Add(pb); spalte.Controls.Add(au);
+        y += S(34 + 16);
 
         spalte.Controls.Add(Caption(T("Kopien", "Copies"), ref y, rand));
         var ko = new NumericUpDown
@@ -576,7 +695,7 @@ internal sealed class DruckDialog : Form
         };
 
         Controls.Add(spalte);
-        return (cb, eg, du, sk, ra, rk, rb, vn, bs, ko, pzFeld, pz, chk, ok, ab);
+        return (cb, eg, pf, pb, au, du, sk, ra, rk, rb, vn, bs, ko, pzFeld, pz, chk, ok, ab);
     }
 
     private Label Caption(string text, ref int y, int rand)
@@ -624,23 +743,31 @@ internal sealed class DruckDialog : Form
         if (IsHandleCreated) VorschauVerzoegertStarten();
     }
 
+    /// <summary>Anzahl Vorschau-/Druckblaetter im aktuellen Auftrag
+    /// (Auftragsseiten aufgeteilt zu "Seiten pro Blatt").</summary>
+    private int BlattAnzahl()
+        => auftrag.Count == 0 ? 0 : (auftrag.Count + SeitenProBlatt - 1) / SeitenProBlatt;
+
     private void Blaettern(int delta)
     {
-        if (auftrag.Count == 0) return;
-        vorschauPos = Math.Max(0, Math.Min(auftrag.Count - 1, vorschauPos + delta));
+        int blaetter = BlattAnzahl();
+        if (blaetter == 0) return;
+        vorschauPos = Math.Max(0, Math.Min(blaetter - 1, vorschauPos + delta));
         VorschauVerzoegertStarten();
     }
 
-    /// <summary>Seite auf ein A4-Blatt komponieren, GENAU wie der Druck sie
-    /// platziert: Anpassen = in die druckbare Flaeche (querlaufende Seiten
-    /// automatisch 90 Grad gedreht), fester Faktor = 1:1-Massstab zentriert,
-    /// Ueberhaenge clippt das Blatt wie der Treiber das Papier. Das Blatt
-    /// steht mit Schatten und Rand auf TRANSPARENTEM Grund - die graue Zone
-    /// scheint durch, man sieht das Blatt wie bei PDFgear (Nutzer-Wunsch).</summary>
-    private Image PapierAnsicht(Image seite, double bPt, double hPt)
+    /// <summary>Seite(n) auf das ECHTE Blatt des gewaehlten Druckers kompo-
+    /// nieren, GENAU wie der Druck sie platziert: Papierformat/Ausrichtung
+    /// aus druckerEinstellungen (DruckLayout.BlattMasse), Einpassen in die
+    /// druckbare Flaeche (gedreht, WENN das mehr Flaeche nutzt - wie
+    /// SeiteEinpassen), N-up als Gitter mit Zellabstand, fester Faktor =
+    /// 1:1-Massstab zentriert, Ueberhaenge clippt das Blatt wie der Treiber
+    /// das Papier. Das Blatt steht mit Schatten und Rand auf TRANSPARENTEM
+    /// Grund - die graue Zone scheint durch, man sieht das Blatt wie bei
+    /// PDFgear (Nutzer-Wunsch).</summary>
+    private Image BlattAnsicht(List<(Image bild, double bPt, double hPt)> seiten)
     {
-        const double blattB = 595.0, blattH = 842.0;   // Blattmodell A4 hoch
-        const double randPt = 18.0;                    // uebliche druckbare Raender
+        var (blattB, blattH, druckbar) = DruckLayout.BlattMasse(druckerEinstellungen);
         int bh = 1600;
         int bb = (int)Math.Round(blattB / blattH * bh);
         int sch = (int)Math.Round(bh * 0.014);         // Schattenwurf ~ Reserve
@@ -649,44 +776,109 @@ internal sealed class DruckDialog : Form
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         g.Clear(Color.Transparent);
+        float px = (float)(bh / blattH);   // pt -> px
+        g.ScaleTransform(px, px);          // ab hier in pt zeichnen
+        float schPt = sch / px;
 
-        var blatt = new Rectangle(sch, sch, bb, bh);
+        var blatt = new RectangleF(schPt, schPt, (float)blattB, (float)blattH);
         // Schatten: zwei weich gestaffelte Lagen unter dem Blatt
         using (var s1 = new SolidBrush(Color.FromArgb(26, 0, 0, 0)))
-            g.FillRectangle(s1, blatt.X + sch, blatt.Y + sch, bb, bh);
+            g.FillRectangle(s1, blatt.X + schPt, blatt.Y + schPt, (float)blattB, (float)blattH);
         using (var s2 = new SolidBrush(Color.FromArgb(48, 0, 0, 0)))
-            g.FillRectangle(s2, blatt.X + sch / 2, blatt.Y + sch / 2, bb, bh);
+            g.FillRectangle(s2, blatt.X + schPt / 2, blatt.Y + schPt / 2, (float)blattB, (float)blattH);
         // Blatt
         g.FillRectangle(Brushes.White, blatt);
 
-        bool fit = skalierung.SelectedIndex == 0;
-        bool drehen = fit && bPt > hPt;                // Blatt hoch: quer -> drehen
-        double b = drehen ? hPt : bPt, h = drehen ? bPt : hPt;
-        double s = fit ? Math.Min((blattB - 2 * randPt) / b, (blattH - 2 * randPt) / h) : Skalierung;
-        double wPt = b * s, hPt2 = h * s;
-        double px = bb / blattB;
-        var ziel = new RectangleF(
-            blatt.X + (float)((blattB / 2 - wPt / 2) * px), blatt.Y + (float)((blattH / 2 - hPt2 / 2) * px),
-            (float)(wPt * px), (float)(hPt2 * px));
-        if (drehen)
+        double skal = Skalierung;   // bei N-up erzwingt die Combo Einpassen
+        var (spalten, zeilen) = seiten.Count == 1
+            ? (1, 1)
+            : DruckLayout.Gitter(seiten.Count, druckbar.Width, druckbar.Height,
+                                 seiten[0].bPt, seiten[0].hPt);
+        float kontur = (float)(blattH * 0.00375);   // 6 px auf 1600 px Hoehe wie bisher
+        for (int i = 0; i < seiten.Count; i++)
         {
-            using var gedreht = new Bitmap(seite);
-            gedreht.RotateFlip(RotateFlipType.Rotate270FlipNone);
-            g.DrawImage(gedreht, ziel);
+            var (bild, bPt, hPt) = seiten[i];
+            var zelle = seiten.Count == 1 ? druckbar : DruckLayout.Zelle(druckbar, spalten, zeilen, i);
+            var (ziel, drehen) = DruckLayout.SeiteInZelle(bPt, hPt, zelle, skal);
+            if (drehen) bild.RotateFlip(RotateFlipType.Rotate90FlipNone);   // wie im Druck
+            g.DrawImage(bild, ziel);
+            // Seitenkontur: weiße Seiten waeren auf weißem Blatt unsichtbar -
+            // die dezente Umrandung macht Zellen/Skalierung immer sichtbar.
+            // Nach INNEN versetzt: bei 100 % deckt die Seite das Blatt exakt.
+            using (var stift = new Pen(Color.FromArgb(190, 197, 208), kontur))
+                g.DrawRectangle(stift, ziel.X + kontur / 2, ziel.Y + kontur / 2,
+                                ziel.Width - kontur, ziel.Height - kontur);
         }
-        else
-        {
-            g.DrawImage(seite, ziel);
-        }
-        // Seitenkontur: weiße Seiten waeren auf weißem Blatt unsichtbar - die
-        // dezente Umrandung macht den Skalierungseffekt immer sichtbar. Nach
-        // INNEN versetzt: bei 100 % deckt die Seite das Blatt exakt.
-        using (var kontur = new Pen(Color.FromArgb(190, 197, 208), 6f))
-            g.DrawRectangle(kontur, ziel.X + 3, ziel.Y + 3, ziel.Width - 6, ziel.Height - 6);
         // Blattrand
-        using (var rand = new Pen(hell ? Color.FromArgb(205, 210, 219) : Color.FromArgb(82, 88, 98)))
-            g.DrawRectangle(rand, blatt.X, blatt.Y, bb, bh);
+        using (var rand = new Pen(hell ? Color.FromArgb(205, 210, 219) : Color.FromArgb(82, 88, 98), kontur))
+            g.DrawRectangle(rand, blatt.X, blatt.Y, (float)blattB, (float)blattH);
         return img;
+    }
+
+    /// <summary>Papierformat-Combo aus den Formaten des GEWAEHLTEN Druckers
+    /// fuellen und dessen Standard-Format waehlen (Guard verhindert den
+    /// Vorschau-Neustart beim Befuellen). Duplikate ausfiltern; ein
+    /// Default-Format, das in der Treiberliste fehlt, wandert vorne rein.</summary>
+    private void PapierListeFuellen(ComboBox pf)
+    {
+        synchronisiere = true;
+        try
+        {
+            pf.DisplayMember = nameof(PaperSize.PaperName);
+            pf.Items.Clear();
+            var formate = new List<PaperSize>();
+            try
+            {
+                foreach (PaperSize p in druckerEinstellungen.PaperSizes)
+                    if (!string.IsNullOrEmpty(p.PaperName) && !formate.Any(f => f.PaperName == p.PaperName))
+                        formate.Add(p);
+            }
+            catch { }
+            PaperSize? aktuell = null;
+            try { aktuell = druckerEinstellungen.DefaultPageSettings.PaperSize; } catch { }
+            if (aktuell != null && !string.IsNullOrEmpty(aktuell.PaperName)
+                && !formate.Any(f => f.PaperName == aktuell.PaperName))
+                formate.Insert(0, aktuell);
+            foreach (var f in formate) pf.Items.Add(f);
+            int ix = aktuell != null ? formate.FindIndex(f => f.PaperName == aktuell.PaperName) : -1;
+            pf.SelectedIndex = ix >= 0 ? ix : (formate.Count > 0 ? 0 : -1);
+        }
+        finally { synchronisiere = false; }
+    }
+
+    /// <summary>Papier-Combo auf das aktuelle DefaultPageSettings-Papier
+    /// stellen (nach Treiberdialog/Druckerwechsel). Ein dort gesetztes Format,
+    /// das in der Liste fehlt, fuellt die Liste neu - intern fuer den
+    /// kopflosen Test.</summary>
+    internal void PapierSynchronisieren()
+    {
+        PaperSize? aktuell = null;
+        try { aktuell = druckerEinstellungen.DefaultPageSettings.PaperSize; } catch { }
+        if (aktuell == null) return;
+        synchronisiere = true;
+        try
+        {
+            int ix = papierFormat.Items.Cast<PaperSize>().ToList()
+                .FindIndex(f => f.PaperName == aktuell.PaperName);
+            if (ix >= 0) papierFormat.SelectedIndex = ix;
+            else PapierListeFuellen(papierFormat);
+        }
+        finally { synchronisiere = false; }
+    }
+
+    /// <summary>Ausrichtungs-Combo aus druckerEinstellungen lesen (nach
+    /// Treiberdialog/Druckerwechsel) - intern fuer den kopflosen Test.</summary>
+    internal void AusrichtungSynchronisieren()
+    {
+        synchronisiere = true;
+        try { ausrichtung.SelectedIndex = LiesQuer() ? 1 : 0; }
+        finally { synchronisiere = false; }
+    }
+
+    private bool LiesQuer()
+    {
+        try { return druckerEinstellungen.DefaultPageSettings.Landscape; }
+        catch { return false; }
     }
 
     /// <summary>Labels sofort aktualisieren und das Laden des Vorschaubilds
@@ -701,8 +893,10 @@ internal sealed class DruckDialog : Form
 
     private void NavAktualisieren()
     {
+        int blaetter = BlattAnzahl();
+        if (vorschauPos >= blaetter) vorschauPos = Math.Max(0, blaetter - 1);
         zurueck.Enabled = vorschauPos > 0;
-        weiter.Enabled = vorschauPos < auftrag.Count - 1;
+        weiter.Enabled = vorschauPos < blaetter - 1;
         if (auftrag.Count == 0)
         {
             vorschau.Image = null;
@@ -710,35 +904,64 @@ internal sealed class DruckDialog : Form
             vorschauInfo.Text = T("Keine Seiten gewählt.", "No pages selected.");
             return;
         }
-        int nr = auftrag[vorschauPos];
-        seitenZahl.Text = string.Format(T("Seite {0} / {1}", "Page {0} / {1}"), nr + 1, seiten);
+        if (SeitenProBlatt == 1)
+        {
+            int nr = auftrag[vorschauPos];
+            seitenZahl.Text = string.Format(T("Seite {0} / {1}", "Page {0} / {1}"), nr + 1, seiten);
+        }
+        else
+        {
+            seitenZahl.Text = string.Format(T("Blatt {0} / {1}", "Sheet {0} / {1}"), vorschauPos + 1, blaetter);
+        }
     }
 
     internal void VorschauLaden()
     {
         NavAktualisieren();
         if (auftrag.Count == 0) return;
-        int nr = auftrag[vorschauPos];
+        int proBlatt = SeitenProBlatt;
+        int blaetter = BlattAnzahl();
+        int basis = vorschauPos * proBlatt;   // vorschauPos ist ein BLATT-Index
+        // Vorschau-DPI je N-up-Stufe: 16 Seiten je 200 dpi waeren ~250 MB
+        // RAM je Blatt - die Zellen sind klein, weniger Aufloesung reicht.
+        // 1-up bleibt 200 (auf 150-%-Monitoren war 150 sichtbar koernig)
+        int dpi = proBlatt switch { 1 => 200, 2 => 150, 4 => 120, 6 => 100, 9 => 80, _ => 70 };
+        var eigene = new List<Image>();
         try
         {
-            // Seite in fixer Vorschau-DPI (200 - auf 150-%-Monitoren war 150
-            // sichtbar koernig) im gewaehlten annots-Modus, dann auf das
-            // Blatt komponiert - die Vorschau ist der Druck
+            // Seiten in der Stufen-DPI im gewaehlten annots-Modus holen, dann
+            // auf das ECHTE Blatt komponiert - die Vorschau ist der Druck
             var alt = vorschau.Image;
-            using var roh = seiteBild(nr, 200, mitAnnots.Checked);
-            double bPt = masse[nr][0], hPt = masse[nr][1];
-            vorschau.Image = PapierAnsicht(roh, bPt, hPt);
+            var teile = new List<(Image bild, double bPt, double hPt)>();
+            for (int i = basis; i < auftrag.Count && i < basis + proBlatt; i++)
+            {
+                int nr = auftrag[i];
+                var roh = seiteBild(nr, dpi, mitAnnots.Checked);
+                eigene.Add(roh);
+                teile.Add((roh, masse[nr][0], masse[nr][1]));
+            }
+            vorschau.Image = BlattAnsicht(teile);
             alt?.Dispose();
             ZoomAnwenden();
-            vorschauInfo.Text = string.Format(
-                T("Vorschau · Druckauftrag: {0} {1} · Strg+Mausrad zoomt",
-                  "Preview · print job: {0} {1} · Ctrl+wheel zooms"),
-                auftrag.Count, T(auftrag.Count == 1 ? "Seite" : "Seiten", auftrag.Count == 1 ? "page" : "pages"));
+            vorschauInfo.Text = proBlatt == 1
+                ? string.Format(
+                    T("Vorschau · Druckauftrag: {0} {1} · Strg+Mausrad zoomt",
+                      "Preview · print job: {0} {1} · Ctrl+wheel zooms"),
+                    auftrag.Count, T(auftrag.Count == 1 ? "Seite" : "Seiten", auftrag.Count == 1 ? "page" : "pages"))
+                : string.Format(
+                    T("Vorschau · Druckauftrag: {0} {1} auf {2} {3} · Strg+Mausrad zoomt",
+                      "Preview · print job: {0} {1} on {2} {3} · Ctrl+wheel zooms"),
+                    auftrag.Count, T(auftrag.Count == 1 ? "Seite" : "Seiten", auftrag.Count == 1 ? "page" : "pages"),
+                    blaetter, T(blaetter == 1 ? "Blatt" : "Blätter", blaetter == 1 ? "sheet" : "sheets"));
         }
         catch (Exception ex)
         {
             vorschau.Image = null;
             vorschauInfo.Text = T("Vorschau nicht möglich: ", "Preview unavailable: ") + ex.Message;
+        }
+        finally
+        {
+            foreach (var roh in eigene) roh.Dispose();
         }
     }
 
@@ -767,8 +990,11 @@ internal sealed class DruckDialog : Form
     // ---------------------------------------------------------------- Treiber-Eigenschaften
     /// <summary>Oeffnet den Eigenschaften-Dialog des DRUCKERTREIBERS (Papier-
     /// format, Qualitaet, Farbe ...) und wendet die Auswahl auf die Druck-
-    /// einstellungen an. Abbruch laesst alles unberuehrt. Die dort gesetzte
-    /// Duplex-Option uebernimmt unsere Duplex-Auswahl.</summary>
+    /// einstellungen an. Abbruch laesst alles unberuehrt. Duplex, Papierformat
+    /// UND Ausrichtung werden zurueckgelesen (in unsere Combos) und die
+    /// Vorschau aktualisiert - sonst bliebe sie auf dem alten Blatt stehen
+    /// (Nutzer-Fund: "Querformat im Treiberdialog sieht man in der Vorschau
+    /// nicht").</summary>
     internal void TreiberEigenschaftenZeigen()
     {
         string? name = drucker.SelectedItem as string;
@@ -789,6 +1015,9 @@ internal sealed class DruckDialog : Form
                     {
                         druckerEinstellungen.SetHdevmode(hDev);
                         DuplexComboVonTreiber(druckerEinstellungen.Duplex);
+                        PapierSynchronisieren();        // Papierformat uebernehmen
+                        AusrichtungSynchronisieren();   // Hoch/Quer uebernehmen
+                        VorschauVerzoegertStarten();    // Vorschau folgt dem Treiber
                     }
                 }
                 finally { if (hPrn != IntPtr.Zero) ClosePrinter(hPrn); }

@@ -2,6 +2,41 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
 
+## v0.21.40 — Druckdialog: Papierformat, Ausrichtung und Seiten pro Blatt
+- Neu im Druckdialog (PDFgear-Parität): **Papierformat** (Formate des
+  gewählten Druckers), **Seiten pro Blatt** (1/2/4/6/9/16 — mehrere PDF-
+  Seiten auf einem Blatt als N-up-Raster) und **Ausrichtung** (Hochformat/
+  Querformat). Eine Quelle der Wahrheit ist die Druckereinstellung des
+  gewählten Druckers: Die Combos, der Treiber-Dialog und der Druckauftrag
+  lesen und schreiben dort.
+- Fehlerbehobung (Nutzer-Fund: „Druckereigenschaften → Querformat sieht man
+  in der Druckansicht nicht"): Die Vorschau komponierte auf einem festen
+  A4-Hochformat-Blatt und der Treiber-Dialog gab nur die Duplex-Einstellung
+  zurück. Jetzt zeigt die Vorschau das **echte Blatt** (Papierformat,
+  Hoch/Quer, druckbare Fläche des Druckers) und nach dem Treiber-Dialog
+  werden Papierformat UND Ausrichtung übernommen — die Vorschau springt
+  sofort mit. Auch der Druckerwechsel aktualisiert Papierliste, Ausrichtung
+  und Vorschau.
+- Die Vorschau bleibt der Druck: 1 Seite pro Blatt nutzt wie bisher die
+  bewährte Einpass-Mathe, bei mehreren Seiten teilt das Gitter (2×1/1×2
+  nach Blattform, 2×2, 2×3/3×2, 3×3, 4×4) die druckbare Fläche, jede Seite
+  wird zellgenau eingepasst und — wie bei jeder Hoch/Quer-Kollision —
+  gedreht, wenn das gedreht mehr Fläche nutzt. Die Skalierungs-Auswahl ist
+  bei „mehreren Seiten pro Blatt" gesperrt (Einpassen ist dort die einzige
+  sinnvolle Regel). Geblättert wird jetzt blattweise („Blatt 2 / 3"),
+  das Blatt-Paging im Rad und die Seitenzahl-Anzeige folgen.
+- Treiber-Falle behoben (Messung am „Microsoft Print to PDF"): Die von .NET
+  gemeldete druckbare Fläche folgt der Querformat-Einstellung **nicht** —
+  während das Blatt auf 1169×827 wechselt, bleibt die Fläche auf 827×1169
+  stehen; der Druck komponierte dann nur auf der linken Blatthälfte. Die
+  Fläche wird jetzt zentral auf die Blattform-Klasse korrigiert — für die
+  Vorschau und beide Druckwege (1 Seite und N-up).
+- Nachweise: kopfloser Druck-Harness (echter Wrapper-Code, 25 Checks:
+  Combos-Sync, Blattmodell, N-up-Komposit per Pixel-Sample, Gitter-Logik)
+  und echte Drucke nach PDF mit Prüfprotokoll (4 Seiten → 1 Querblatt 2×2
+  mit 4 Zellfarben an den Zellzentren; 6 Seiten → 3 Hochblätter je 2
+  Zellen; Seitenmass exakt A4). Testsuite vollständig PASS.
+
 ## v0.21.39 — Neue Dokumente öffnen in Seitenbreite
 - Änderung (Nutzer-Wunsch): Beim Öffnen eines PDF wird die Ansicht auf
   **Seitenbreite** eingepasst statt 1:1 (100 %) — wie bei PDFgear. Riesige

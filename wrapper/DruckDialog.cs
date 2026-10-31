@@ -25,6 +25,7 @@ internal sealed class DruckDialog : Form
     private readonly int startSeite;             // 1-basiert, aus der UI
     private readonly float f;                    // DPI-Faktor (dpi/96), s. S()
     private readonly double[][] masse;           // Seitenmasse in pt [b,h] je Seite
+    private readonly double startRandMm;         // gespeicherter Seitenrand (mm)
 
     // Theme-Paletten (Farben aus der Web-UI: body / body.light)
     private readonly bool hell;
@@ -35,7 +36,7 @@ internal sealed class DruckDialog : Form
     private readonly ComboBox drucker, duplex, skalierung;
     private readonly ComboBox papierFormat, proBlatt, ausrichtung;   // Papierformat / N-up / Hoch-Quer
     private readonly RadioButton alles, aktuelle, bereich;
-    private readonly NumericUpDown von, bis, kopien, prozent;
+    private readonly NumericUpDown von, bis, kopien, prozent, seitenrand;
     private readonly Button zurueck, weiter, drucken, abbruch, zoomMinus, zoomPlus, zoomPassend, eigenschaften;
     private readonly CheckBox mitAnnots;
     private readonly Label seitenZahl, vorschauInfo, zoomLabel;
@@ -93,11 +94,19 @@ internal sealed class DruckDialog : Form
             ? DruckLayout.SeitenProBlattWerte[proBlatt.SelectedIndex]
             : 1;
 
+    /// <summary>Zusaetzlicher Seitenrand in mm (0-50), allseitig INNHALB der
+    /// druckbaren Flaeche: Einpassen/Zentrieren rechnet mit der schmaleren
+    /// Flaeche - Kleinformate (Fahrzeugschein) bekommen einen symmetrischen
+    /// weissen Rahmen statt flush an den Blattrand zu stossen.</summary>
+    public double RandMm => (double)seitenrand.Value;
+
     /// <param name="dpi">DeviceDpi des Owner-Fensters (Layout-Skalierung).</param>
     /// <param name="hellF">App-Theme (true = helles Design der Web-UI).</param>
     /// <param name="seitenmasse">Seitenmasse in pt je Seite (fuer die Blatt-Komposition).</param>
+    /// <param name="startRandMm">Gespeicherter Seitenrand in mm (einstellungen.json).</param>
     public DruckDialog(int seitenAnzahl, int aktuelleSeite, Func<int, int, bool, Image> bildLader,
-                       string uiSprache, int dpi, bool hellF, double[][] seitenmasse)
+                       string uiSprache, int dpi, bool hellF, double[][] seitenmasse,
+                       double randStartMm = 0)
     {
         seiten = seitenAnzahl;
         seiteBild = bildLader;
@@ -106,6 +115,7 @@ internal sealed class DruckDialog : Form
         auftrag = new List<int>();
         f = Math.Max(1, dpi) / 96f;
         masse = seitenmasse;
+        startRandMm = Math.Clamp(randStartMm, 0, 50);
         hell = hellF;
 
         if (hell)
@@ -146,7 +156,7 @@ internal sealed class DruckDialog : Form
         (zpanel, vorschau, zurueck, weiter, seitenZahl, vorschauInfo,
          zoomMinus, zoomPlus, zoomPassend, zoomLabel) = VorschauBauen();
         (drucker, eigenschaften, papierFormat, proBlatt, ausrichtung, duplex, skalierung,
-         alles, aktuelle, bereich, von, bis, kopien, prozent,
+         alles, aktuelle, bereich, von, bis, kopien, seitenrand, prozent,
          prozentZeile, mitAnnots, drucken, abbruch) = SpalteBauen();
 
         drucken.Click += (_, _) => { DialogResult = DialogResult.OK; Close(); };
@@ -189,6 +199,7 @@ internal sealed class DruckDialog : Form
         SpinnerFokussieren(von);
         SpinnerFokussieren(bis);
         SpinnerFokussieren(kopien);
+        SpinnerFokussieren(seitenrand);
         SpinnerFokussieren(prozent);
         bereich.CheckedChanged += (_, _) => { if (bereich.Checked) von.Select(); };
 
@@ -280,6 +291,13 @@ internal sealed class DruckDialog : Form
         int ix = papierFormat.Items.Cast<PaperSize>().ToList()
             .FindIndex(f => f.PaperName == papierName);
         if (ix >= 0) papierFormat.SelectedIndex = ix;
+    }
+
+    /// <summary>Seitenrand (mm) ueber das ECHTE Feld setzen - intern fuer den
+    /// kopflosen Test.</summary>
+    internal void SeitenrandSetzen(double mm)
+    {
+        seitenrand.Value = Math.Clamp((decimal)mm, 0, 50);
     }
 
     private void ZoomSchritt(double delta)
@@ -435,7 +453,7 @@ internal sealed class DruckDialog : Form
     // ---------------------------------------------------------------- Spalte rechts
     private (ComboBox, Button, ComboBox, ComboBox, ComboBox, ComboBox, ComboBox,
              RadioButton, RadioButton, RadioButton,
-             NumericUpDown, NumericUpDown, NumericUpDown, NumericUpDown,
+             NumericUpDown, NumericUpDown, NumericUpDown, NumericUpDown, NumericUpDown,
              Panel, CheckBox, Button, Button) SpalteBauen()
     {
         int rand = S(26), fw = S(332) - rand * 2;
@@ -565,7 +583,25 @@ internal sealed class DruckDialog : Form
         spalte.Controls.Add(capL); spalte.Controls.Add(capR); spalte.Controls.Add(pb); spalte.Controls.Add(au);
         y += S(34 + 16);
 
-        spalte.Controls.Add(Caption(T("Kopien", "Copies"), ref y, rand));
+        // Kopien + Seitenrand teilen sich eine Zeile (halbformatig wie
+        // "Seiten pro Blatt | Ausrichtung" darueber - kostet keine Hoehe)
+        var capK = new Label
+        {
+            Text = T("Kopien", "Copies").ToUpper(),
+            Font = Ft(8.25f, FontStyle.Bold),
+            ForeColor = muted,
+            AutoSize = true,
+            Location = new Point(rand, y),
+        };
+        var capS = new Label
+        {
+            Text = T("Seitenrand", "Page margin").ToUpper(),
+            Font = Ft(8.25f, FontStyle.Bold),
+            ForeColor = muted,
+            AutoSize = true,
+            Location = new Point(rand + halb + S(12), y),
+        };
+        y += S(24);
         var ko = new NumericUpDown
         {
             Location = new Point(rand, y),
@@ -575,7 +611,24 @@ internal sealed class DruckDialog : Form
             Font = Ft(10.5f),
             TextAlign = HorizontalAlignment.Center,
         };
-        spalte.Controls.Add(ko);
+        var sr = new NumericUpDown
+        {
+            Location = new Point(rand + halb + S(12), y),
+            Size = new Size(S(64), S(32)),
+            Minimum = 0, Maximum = 50,
+            Value = Math.Clamp((decimal)startRandMm, 0, 50),
+            BackColor = feld, ForeColor = textFarbe, BorderStyle = BorderStyle.None,
+            Font = Ft(10.5f),
+            TextAlign = HorizontalAlignment.Center,
+        };
+        var srL = new Label
+        {
+            Text = "mm", Font = Ft(10f), ForeColor = muted, AutoSize = true,
+            Location = new Point(rand + halb + S(12) + S(70), y + S(7)),
+        };
+        sr.ValueChanged += (_, _) => VorschauVerzoegertStarten();   // Randwechsel sofort sichtbar
+        spalte.Controls.Add(capK); spalte.Controls.Add(capS);
+        spalte.Controls.Add(ko); spalte.Controls.Add(sr); spalte.Controls.Add(srL);
         y += S(32 + 20);
 
         spalte.Controls.Add(Caption(T("Seiten", "Pages"), ref y, rand));
@@ -695,7 +748,7 @@ internal sealed class DruckDialog : Form
         };
 
         Controls.Add(spalte);
-        return (cb, eg, pf, pb, au, du, sk, ra, rk, rb, vn, bs, ko, pzFeld, pz, chk, ok, ab);
+        return (cb, eg, pf, pb, au, du, sk, ra, rk, rb, vn, bs, ko, sr, pzFeld, pz, chk, ok, ab);
     }
 
     private Label Caption(string text, ref int y, int rand)
@@ -768,6 +821,15 @@ internal sealed class DruckDialog : Form
     private Image BlattAnsicht(List<(Image bild, double bPt, double hPt)> seiten)
     {
         var (blattB, blattH, druckbar) = DruckLayout.BlattMasse(druckerEinstellungen);
+        // Zusaetzlicher Nutzer-Seitenrand (mm -> pt): innerhalb der schmaleren
+        // Flaeche einpassen/zentrieren - symmetrischer Rahmen statt randloser Stoss
+        double randPt = RandMm * 72.0 / 25.4;
+        if (randPt > 0)
+        {
+            druckbar = RectangleF.Inflate(druckbar, -(float)randPt, -(float)randPt);
+            if (druckbar.Width < 1f || druckbar.Height < 1f)
+                druckbar = new RectangleF(druckbar.X, druckbar.Y, 1f, 1f);
+        }
         int bh = 1600;
         int bb = (int)Math.Round(blattB / blattH * bh);
         int sch = (int)Math.Round(bh * 0.014);         // Schattenwurf ~ Reserve

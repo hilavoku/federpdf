@@ -18,6 +18,11 @@ internal static class Program
     // UI-Theme (hell): Startwert aus einstellungen.json, laufend per
     // Webmessage "theme|light|dark" nachgezogen (Druckdialog palettiert mit)
     private static bool uiHell;
+    // Gespeicherter Druck-Seitenrand (mm, Schlüssel "druckRandMm" in
+    // einstellungen.json): Startwert beim Hochfahren lesen, nach jedem
+    // Druck-OK über /api/prefs zurückschreiben (Server bleibt alleiniger
+    // Schreiber der Datei)
+    private static double druckRandMm;
 
     [STAThread]
     private static void Main(string[] args)
@@ -53,6 +58,9 @@ internal static class Program
                 if (doc.RootElement.TryGetProperty("theme", out var th)
                     && th.ValueKind == JsonValueKind.String && th.GetString() == "light")
                     startLicht = true;
+                if (doc.RootElement.TryGetProperty("druckRandMm", out var drm)
+                    && drm.ValueKind == JsonValueKind.Number)
+                    druckRandMm = Math.Clamp(drm.GetDouble(), 0, 50);
             }
         }
         catch { /* kaputte/kompatible Datei: Deutsch/Dunkel bleibt */ }
@@ -432,7 +440,7 @@ internal static class Program
             Image BildLader(int nr, int dpi, bool annots) => SeiteVomServer(did, nr, dpi, annots);
             var owner = webView.FindForm();
             using var dlg = new DruckDialog(seiten, aktuelleSeite, BildLader, uiSprache,
-                owner?.DeviceDpi ?? 96, uiHell, masse);
+                owner?.DeviceDpi ?? 96, uiHell, masse, druckRandMm);
             if (owner != null) dlg.ZentrierenAuf(owner);   // im DPI-Kontext des Owners erstellen
             if (dlg.ShowDialog(owner) != DialogResult.OK)
             {
@@ -446,6 +454,7 @@ internal static class Program
             bool mitAnnots = dlg.MitAnnots;
             double skalierung = dlg.Skalierung;
             int proBlatt = dlg.SeitenProBlatt;
+            double randMm = dlg.RandMm;
             // Einstellungen inkl. Treiber-Eigenschaften (Papier/Qualitaet/Farbe
             // aus dem Druckereigenschaften-Dialog) MITNEHMEN, bevor der Dialog
             // disposed wird
@@ -455,12 +464,19 @@ internal static class Program
                 await Melden(webView, "null");
                 return;
             }
+            // Seitenrand persistieren (Best-Effort, blockiert den Druck nicht)
+            if (Math.Abs(randMm - druckRandMm) > 0.01)
+            {
+                druckRandMm = randMm;
+                _ = Task.Run(PrefsRandSchreiben);
+            }
 
             await Task.Run(() =>
             {
                 var ps = druckerPs ?? new PrinterSettings { PrinterName = druckerName };
                 ps.Copies = (short)Math.Max(1, Math.Min(kopien, 99));
                 try { ps.Duplex = duplex; } catch { /* Treiber ohne Duplex: einseitig */ }
+                double randPt = randMm * 72.0 / 25.4;   // Nutzer-Seitenrand mm -> pt
                 // Render-DPI = Aufloesung des GEWAHLTEN Druckers (geklemmt: 600 dpi
                 // ist Laserqualitaet, mehr waere nur Speicher). Erst HIER lesen - im
                 // Hintergrund-Task: DefaultPageSettings fragt beim Offline-
@@ -512,7 +528,7 @@ internal static class Program
                             using var roh = System.Drawing.Image.FromStream(ms);
                             bilder.Add(new Bitmap(roh));
                         }
-                        BlattZeichnen(ev.Graphics!, ev.PageSettings, stapel, bilder, skalierung, proBlatt);
+                        BlattZeichnen(ev.Graphics!, ev.PageSettings, stapel, bilder, skalierung, proBlatt, randPt);
                     }
                     finally { foreach (var b in bilder) b.Dispose(); }
                     ev.HasMorePages = index < liste.Count;
@@ -555,6 +571,27 @@ internal static class Program
         catch { /* UI evtl. schon geschlossen */ }
     }
 
+    /// <summary>Seitenrand in die UI-Praeferenzen schreiben: GET /api/prefs,
+    /// Schluessel "druckRandMm" setzen, POST zurueck — der Server bleibt
+    /// alleiniger Schreiber der einstellungen.json. Best-Effort: scheitert
+    /// es (Server weg, kaputtes JSON), bleibt es beim alten Stand.</summary>
+    private static void PrefsRandSchreiben()
+    {
+        try
+        {
+            using var http = new HttpClient(new System.Net.Http.HttpClientHandler { UseProxy = false })
+            { Timeout = TimeSpan.FromSeconds(5) };
+            var json = http.GetStringAsync($"http://127.0.0.1:{port}/api/prefs").Result;
+            var node = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject;
+            if (node == null) return;
+            node["druckRandMm"] = druckRandMm;
+            using var content = new StringContent(node.ToJsonString(),
+                System.Text.Encoding.UTF8, "application/json");
+            http.PostAsync($"http://127.0.0.1:{port}/api/prefs", content).Wait();
+        }
+        catch { /* Prefs sind Best-Effort - der Druck ist davon unberuehrt */ }
+    }
+
     /// <summary>Eine PDF-Seite zeichnen: Seitenverhaeltnis erhalten, zentriert
     /// in der druckbaren Flaeche, nie ueber Hardware-Raender hinaus.
     /// skalierung 0 = an Seitenrand anpassen (NUR skalieren - seit v0.21.41
@@ -567,14 +604,22 @@ internal static class Program
     /// korrigiert aus DruckLayout (PrintableArea folgt der Landscape-DEVMODE
     /// nicht, Mess-Fund 31.10.2026).</summary>
     private static void SeiteEinpassen(Graphics g, PageSettings seite, Image bild,
-                                       double bPt, double hPt, double skalierung = 0)
+                                       double bPt, double hPt, double skalierung = 0,
+                                       double randPt = 0)
     {
         g.PageUnit = GraphicsUnit.Display;
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
         g.SmoothingMode = SmoothingMode.HighQuality;
 
-        // Druckbare Flaeche in pt (korrigiert), zum Zeichnen nach 1/100 Zoll
+        // Druckbare Flaeche in pt (korrigiert), Nutzer-Rand einziehen, zum
+        // Zeichnen nach 1/100 Zoll
         var druckbar = DruckLayout.DruckbareFlaeche(seite, seite.Bounds.Width * 0.72, seite.Bounds.Height * 0.72);
+        if (randPt > 0)
+        {
+            druckbar = RectangleF.Inflate(druckbar, -(float)randPt, -(float)randPt);
+            if (druckbar.Width < 1f || druckbar.Height < 1f)
+                druckbar = new RectangleF(druckbar.X, druckbar.Y, 1f, 1f);
+        }
         float ax = druckbar.X / 0.72f, ay = druckbar.Y / 0.72f;
         float aw = Math.Max(1f, druckbar.Width / 0.72f), ah = Math.Max(1f, druckbar.Height / 0.72f);
 
@@ -591,10 +636,13 @@ internal static class Program
     /// Skalierung, falls gewaehlt); mehrere Seiten werden als N-up-Gitter
     /// (DruckLayout) komponiert - jede Zelle einpassend, OHNE automatische
     /// Drehung (v0.21.41), identisch zur Vorschau ("Vorschau = Druck").
-    /// Internal fuer den kopflosen Druck-Harness.</summary>
+    /// randPt = Nutzer-Seitenrand (mm in pt), allseitig INNERHALB der
+    /// druckbaren Flaeche einziehen - Einpassen/Zentrieren rechnet mit der
+    /// schmaleren Flaeche (symmetrischer Rahmen). Internal fuer den kopflosen
+    /// Druck-Harness.</summary>
     internal static void BlattZeichnen(Graphics g, PageSettings seite,
         List<(int nr, double bPt, double hPt)> stapel, List<Image> bilder,
-        double skalierung, int proBlatt)
+        double skalierung, int proBlatt, double randPt = 0)
     {
         if (stapel.Count == 0 || stapel.Count > bilder.Count) return;
         g.PageUnit = GraphicsUnit.Display;
@@ -604,14 +652,21 @@ internal static class Program
         if (proBlatt <= 1)
         {
             var (_, bPt0, hPt0) = stapel[0];
-            SeiteEinpassen(g, seite, bilder[0], bPt0, hPt0, skalierung);
+            SeiteEinpassen(g, seite, bilder[0], bPt0, hPt0, skalierung, randPt);
             return;
         }
 
         // Druckbare Flaeche in pt, orientierungskorrigiert (PrintableArea folgt
-        // der Landscape-DEVMODE nicht, Mess-Fund 31.10.2026); Zellen/Seiten in
-        // pt rechnen, Ziel-Rects zum Zeichnen nach 1/100 Zoll (/0,72)
+        // der Landscape-DEVMODE nicht, Mess-Fund 31.10.2026), Nutzer-Rand
+        // einziehen; Zellen/Seiten in pt rechnen, Ziel-Rects zum Zeichnen nach
+        // 1/100 Zoll (/0,72)
         var flaeche = DruckLayout.DruckbareFlaeche(seite, seite.Bounds.Width * 0.72, seite.Bounds.Height * 0.72);
+        if (randPt > 0)
+        {
+            flaeche = RectangleF.Inflate(flaeche, -(float)randPt, -(float)randPt);
+            if (flaeche.Width < 1f || flaeche.Height < 1f)
+                flaeche = new RectangleF(flaeche.X, flaeche.Y, 1f, 1f);
+        }
         var (spalten, zeilen) = DruckLayout.Gitter(stapel.Count, flaeche.Width, flaeche.Height,
                                                    stapel[0].bPt, stapel[0].hPt);
         for (int i = 0; i < stapel.Count; i++)

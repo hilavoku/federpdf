@@ -2,6 +2,28 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
 
+## v0.21.42 — Seitenrand einstellbar (Druckdialog)
+- Neu (Nutzer-Wunsch „Seitenränder einstellen"): Der Druckdialog hat ein
+  **Seitenrand-Feld in Millimetern (0–50)** neben „Kopien". Der Rand wird
+  allseitig **innerhalb** der druckbaren Fläche eingezogen — Einpassen und
+  Zentrieren rechnen mit der schmaleren Fläche, das Dokument bekommt also
+  einen symmetrischen weißen Rahmen statt flush an den Blattrand zu stoßen
+  (der Fahrzeugschein-Fall: Die Querseite füllte bisher die komplette
+  Blattbreite). Gilt für Einzel- und N-up-Druck und live in der Vorschau.
+- Der Rand wird **gemerkt** (einstellungen.json, Schlüssel „druckRandMm")
+  — einmal eingestellt, gilt er für alle weiteren Drucke. Der Wrapper
+  schreibt über /api/prefs (GET → ändern → POST); der Server bleibt
+  alleiniger Schreiber der Datei.
+- Zur Frage „macht man das in den Druckereigenschaften des Windows-
+  Treibers?": Dort gibt es keine Layoutränder (nur Papierfach/Qualität;
+  der Treiber kennt nur die hardwarebedingten Mindestabstände) — die
+  Platzierungsränder gehören in den Dialog der App.
+- Nachweise: Druck-Harness erweitert (20-mm-Vorschau: Seite beginnt am
+  Innenrand, Randband weiß — 32 Checks PASS); echter Druck nach PDF mit
+  PyMuPDF-Prüfprotokoll: Bei 20 mm liegen die Bildränder symmetrisch
+  (links = rechts ≈ 56,7 pt), das Bild ist vertikal mittig, das Randband
+  weiß.
+
 ## v0.21.41 — „An Seitenrand anpassen" dreht nicht mehr
 - Fehlerbehobung (Nutzer-Fund: „Fahrzeugschein wird um 90 Grad gedreht"):
   Der Einpass-Modus drehte PDF-Seiten automatisch um 90°, sobald Seiten-

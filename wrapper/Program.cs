@@ -611,9 +611,14 @@ internal static class Program
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
         g.SmoothingMode = SmoothingMode.HighQuality;
 
-        // Druckbare Flaeche in pt (korrigiert), Nutzer-Rand einziehen, zum
-        // Zeichnen nach 1/100 Zoll
+        // Druckbare Flaeche in pt (korrigiert). GDI-Ursprung beim Drucken
+        // (OriginAtMargins=false, Doku) ist bereits die Ecke der druckbaren
+        // Flaeche - die X/Y-Offsets gehoeren NICHT in die Zeichnung (sonst
+        // Hardware-Rand doppelt). REIHENFOLGE: erst Ursprung nullen, DANN den
+        // Nutzer-Rand einziehen (sonst verliert der Inset seine Position)
         var druckbar = DruckLayout.DruckbareFlaeche(seite, seite.Bounds.Width * 0.72, seite.Bounds.Height * 0.72);
+        druckbar.X = 0f;
+        druckbar.Y = 0f;
         if (randPt > 0)
         {
             druckbar = RectangleF.Inflate(druckbar, -(float)randPt, -(float)randPt);
@@ -661,6 +666,10 @@ internal static class Program
         // einziehen; Zellen/Seiten in pt rechnen, Ziel-Rects zum Zeichnen nach
         // 1/100 Zoll (/0,72)
         var flaeche = DruckLayout.DruckbareFlaeche(seite, seite.Bounds.Width * 0.72, seite.Bounds.Height * 0.72);
+        // GDI-Ursprung = Ecke der druckbaren Flaeche (OriginAtMargins=false,
+        // wie SeiteEinpassen); REIHENFOLGE: erst nullen, dann Rand einziehen
+        flaeche.X = 0f;
+        flaeche.Y = 0f;
         if (randPt > 0)
         {
             flaeche = RectangleF.Inflate(flaeche, -(float)randPt, -(float)randPt);

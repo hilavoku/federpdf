@@ -821,6 +821,18 @@ internal sealed class DruckDialog : Form
     private Image BlattAnsicht(List<(Image bild, double bPt, double hPt)> seiten)
     {
         var (blattB, blattH, druckbar) = DruckLayout.BlattMasse(druckerEinstellungen);
+        int bh = 1600;
+        int bb = (int)Math.Round(blattB / blattH * bh);
+        int sch = (int)Math.Round(bh * 0.014);         // Schattenwurf ~ Reserve
+        float px = (float)(bh / blattH);               // pt -> px
+        float schPt = sch / px;                        // Blattursprung im Komposit
+        // druckbar ist in BLATT-Koordinaten (X/Y = Hardware-Rand vom Blatt-
+        // ursprung) - das Blatt liegt im Komposit aber bei (schPt, schPt),
+        // die Flaeche muss also dorthin verschoben werden, sonst klebt das
+        // Dokument links/oben am Blatt und rechts/unten entsteht ein
+        // zusaetzlicher Rand (Nutzer-Fund "linksbuendig, rechts ein Rand")
+        druckbar.X += schPt;
+        druckbar.Y += schPt;
         // Zusaetzlicher Nutzer-Seitenrand (mm -> pt): innerhalb der schmaleren
         // Flaeche einpassen/zentrieren - symmetrischer Rahmen statt randloser Stoss
         double randPt = RandMm * 72.0 / 25.4;
@@ -830,17 +842,12 @@ internal sealed class DruckDialog : Form
             if (druckbar.Width < 1f || druckbar.Height < 1f)
                 druckbar = new RectangleF(druckbar.X, druckbar.Y, 1f, 1f);
         }
-        int bh = 1600;
-        int bb = (int)Math.Round(blattB / blattH * bh);
-        int sch = (int)Math.Round(bh * 0.014);         // Schattenwurf ~ Reserve
         var img = new Bitmap(bb + 2 * sch, bh + 2 * sch, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         using var g = Graphics.FromImage(img);
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         g.Clear(Color.Transparent);
-        float px = (float)(bh / blattH);   // pt -> px
         g.ScaleTransform(px, px);          // ab hier in pt zeichnen
-        float schPt = sch / px;
 
         var blatt = new RectangleF(schPt, schPt, (float)blattB, (float)blattH);
         // Schatten: zwei weich gestaffelte Lagen unter dem Blatt

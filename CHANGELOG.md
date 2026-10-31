@@ -2,6 +2,28 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
 
+## v0.21.46 — Dokument wirklich mittig: Blattursprünge korrekt
+- Fehlerbehobung (Nutzer-Fund: „linksbündig mit der Seite, aber rechts ist
+  ein Rand"): Zwei spiegelbildliche Ursprungsfehler —
+  (1) **Vorschau:** Das Dokument wurde ab dem Komposit-Nullpunkt gezeichnet,
+  das Blatt liegt für den Schattenwurf aber ~4 mm weiter innen — es klebte
+  dadurch links/oben an der Blattkante, rechts/unten entstand der
+  zusätzliche Rand. Jetzt wird die druckbare Fläche mit auf den Blatt-
+  ursprung verschoben.
+  (2) **Druck:** Der GDI-Druckursprung liegt laut .NET-Dokumentation
+  (OriginAtMargins=false, unser Default) **bereits** an der Ecke der
+  druckbaren Fläche — die Hardware-Offsets wurden trotzdem nochmal in die
+  Zeichnung gerechnet (doppelter Rand links/oben am HP). Reihenfolge
+  festgehalten: erst Ursprung nullen, dann den Nutzer-Seitenrand einziehen
+  (sonst verliert der Rand seine Position — erster Versuch genau daran
+  gescheitert und von der PDF-Prüfung erwischt).
+- Ergebnis: Das Dokument steht in Vorschau und Druck symmetrisch in der
+  bedruckbaren Fläche; bei Seitenrand 0 mm bleibt nur der physische
+  Hardware-Rand des Druckers (~3 mm) als weißer Saum.
+- Nachweise: Druck-Harness am Notebook mit dem HP als Vorschau-Drucker —
+  Blattrand frei, Seite dahinter (34 Checks PASS, komplett); ThinkCentre
+  32 + 31 PASS inkl. aller N-up/Quer-Aufrecht/Rand-Drucke nach PDF.
+
 ## v0.21.45 — Fußzeile: Seitenzahl frei zwischen den Pfeilen
 - Nachbesserung (Nutzer-Fund: „eite 1 / i" blieb): Die Blätterpfeile ‹ ›
   stehen höher in der Zeichnung als die Seitenzahl und verdeckten deren

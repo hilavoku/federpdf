@@ -121,31 +121,21 @@ internal static class DruckLayout
 
     /// <summary>Eine Seite in eine Zelle einpassen (gleiche Einheit fuer Seite
     /// und Zelle - pt fuer die Vorschau, 1/100 Zoll im Druck): Seitenverhaeltnis
-    /// erhalten, zentriert. Einpass-Modus (skalierung &lt;= 0) dreht 90 Grad,
-    /// WENN das gedreht mehr Flaeche nutzt - das verallgemeinert die bewaehrte
-    /// Hoch/Quer-Kollision von SeiteEinpassen auf beliebig geformte Zellen.
-    /// Fester Massstab (&gt; 0) dreht NIE. Rueckgabe-Ziel in derselben Einheit;
-    /// die Drehung macht der Aufrufer am Bitmap (Rotate90FlipNone).</summary>
-    public static (RectangleF ziel, bool drehen) SeiteInZelle(double seiteB, double seiteH,
-                                                              RectangleF zelle, double skalierung)
+    /// erhalten, zentriert. KEINE automatische Drehung (v0.21.41, Nutzer-Fund
+    /// "Fahrzeugschein wird um 90 Grad gedreht") - Seiten drucken IMMER so, wie
+    /// sie angezeigt werden; das Blattformat steuert die Ausrichtungs-Combo.
+    /// Fester Massstab (&gt; 0) zentriert ohne Anpassung, Ueberhaenge clippt
+    /// das Blatt wie der Treiber das Papier.</summary>
+    public static RectangleF SeiteInZelle(double seiteB, double seiteH,
+                                          RectangleF zelle, double skalierung)
     {
-        bool drehen = false;
-        double skala;
-        if (skalierung <= 0)
-        {
-            double gerade = Math.Min(zelle.Width / seiteB, zelle.Height / seiteH);
-            double gedreht = Math.Min(zelle.Width / seiteH, zelle.Height / seiteB);
-            drehen = gedreht > gerade * 1.0001;   // Toleranz: nicht wegen Rundung kippen
-            skala = Math.Max(gerade, gedreht);
-        }
-        else
-        {
-            skala = skalierung;
-        }
+        double skala = skalierung > 0
+            ? skalierung
+            : Math.Min(zelle.Width / seiteB, zelle.Height / seiteH);
         double b = seiteB * skala, h = seiteH * skala;
-        return (new RectangleF(
+        return new RectangleF(
             zelle.X + (float)((zelle.Width - b) / 2.0),
             zelle.Y + (float)((zelle.Height - h) / 2.0),
-            (float)b, (float)h), drehen);
+            (float)b, (float)h);
     }
 }

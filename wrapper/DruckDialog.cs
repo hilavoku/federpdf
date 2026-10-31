@@ -759,8 +759,8 @@ internal sealed class DruckDialog : Form
     /// <summary>Seite(n) auf das ECHTE Blatt des gewaehlten Druckers kompo-
     /// nieren, GENAU wie der Druck sie platziert: Papierformat/Ausrichtung
     /// aus druckerEinstellungen (DruckLayout.BlattMasse), Einpassen in die
-    /// druckbare Flaeche (gedreht, WENN das mehr Flaeche nutzt - wie
-    /// SeiteEinpassen), N-up als Gitter mit Zellabstand, fester Faktor =
+    /// druckbare Flaeche OHNE automatische Drehung (v0.21.41 - wie der
+    /// Druck), N-up als Gitter mit Zellabstand, fester Faktor =
     /// 1:1-Massstab zentriert, Ueberhaenge clippt das Blatt wie der Treiber
     /// das Papier. Das Blatt steht mit Schatten und Rand auf TRANSPARENTEM
     /// Grund - die graue Zone scheint durch, man sieht das Blatt wie bei
@@ -799,8 +799,7 @@ internal sealed class DruckDialog : Form
         {
             var (bild, bPt, hPt) = seiten[i];
             var zelle = seiten.Count == 1 ? druckbar : DruckLayout.Zelle(druckbar, spalten, zeilen, i);
-            var (ziel, drehen) = DruckLayout.SeiteInZelle(bPt, hPt, zelle, skal);
-            if (drehen) bild.RotateFlip(RotateFlipType.Rotate90FlipNone);   // wie im Druck
+            var ziel = DruckLayout.SeiteInZelle(bPt, hPt, zelle, skal);   // keine Auto-Drehung (v0.21.41)
             g.DrawImage(bild, ziel);
             // Seitenkontur: weiße Seiten waeren auf weißem Blatt unsichtbar -
             // die dezente Umrandung macht Zellen/Skalierung immer sichtbar.

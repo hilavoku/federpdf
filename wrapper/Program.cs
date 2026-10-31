@@ -557,13 +557,15 @@ internal static class Program
 
     /// <summary>Eine PDF-Seite zeichnen: Seitenverhaeltnis erhalten, zentriert
     /// in der druckbaren Flaeche, nie ueber Hardware-Raender hinaus.
-    /// skalierung 0 = an Seitenrand anpassen (mit automatischer 90-Grad-
-    /// Drehung bei Hoch/Quer-Kollision, wie jeder PDF-Viewer); jeder andere
-    /// Wert = fester Faktor (1,0 = tatsaechliche Groesse) OHNE Drehung -
-    /// Ueberhaenge clippt der Treiber wie bei Acrobat. Koordinaten in
-    /// 1/100 Zoll - GraphicsUnit.Display ist beim Drucker genau das. Die
-    /// Flaeche kommt orientierungskorrigiert aus DruckLayout (PrintableArea
-    /// folgt der Landscape-DEVMODE nicht, Mess-Fund 31.10.2026).</summary>
+    /// skalierung 0 = an Seitenrand anpassen (NUR skalieren - seit v0.21.41
+    /// KEINE automatische 90-Grad-Drehung mehr, Nutzer-Fund "Fahrzeugschein
+    /// wird um 90 Grad gedreht": Seiten drucken so, wie sie angezeigt werden;
+    /// das Blattformat steuert die Ausrichtungs-Combo); jeder andere Wert =
+    /// fester Faktor (1,0 = tatsaechliche Groesse) - Ueberhaenge clippt der
+    /// Treiber wie bei Acrobat. Koordinaten in 1/100 Zoll - GraphicsUnit.
+    /// Display ist beim Drucker genau das. Die Flaeche kommt orientierungs-
+    /// korrigiert aus DruckLayout (PrintableArea folgt der Landscape-DEVMODE
+    /// nicht, Mess-Fund 31.10.2026).</summary>
     private static void SeiteEinpassen(Graphics g, PageSettings seite, Image bild,
                                        double bPt, double hPt, double skalierung = 0)
     {
@@ -576,24 +578,20 @@ internal static class Program
         float ax = druckbar.X / 0.72f, ay = druckbar.Y / 0.72f;
         float aw = Math.Max(1f, druckbar.Width / 0.72f), ah = Math.Max(1f, druckbar.Height / 0.72f);
 
-        bool passend = skalierung <= 0;
-        bool gleich = (bPt > hPt) == (aw > ah);
-        if (passend && !gleich) bild.RotateFlip(RotateFlipType.Rotate90FlipNone);
-        double bZoll = (passend && !gleich ? hPt : bPt) / 72.0;
-        double hZoll = (passend && !gleich ? bPt : hPt) / 72.0;
-        double skala = passend
-            ? Math.Min(aw / (bZoll * 100.0), ah / (hZoll * 100.0))
+        double b100 = bPt / 72.0 * 100.0, h100 = hPt / 72.0 * 100.0;   // Seite in 1/100 Zoll
+        double skala = skalierung <= 0
+            ? Math.Min(aw / b100, ah / h100)
             : skalierung;
-        double b = bZoll * 100.0 * skala, h = hZoll * 100.0 * skala;
+        double b = b100 * skala, h = h100 * skala;
         g.DrawImage(bild, ax + (float)((aw - b) / 2.0), ay + (float)((ah - h) / 2.0), (float)b, (float)h);
     }
 
     /// <summary>Einen Druck-Blattbogen zeichnen (Koordinaten 1/100 Zoll):
     /// 1 Seite pro Blatt nutzt den bewaehrten SeiteEinpass-Pfad (mit fester
     /// Skalierung, falls gewaehlt); mehrere Seiten werden als N-up-Gitter
-    /// (DruckLayout) komponiert - jede Zelle einpassend mit derselben
-    /// Dreh-Regel wie die Vorschau ("Vorschau = Druck"). Internal fuer den
-    /// kopflosen Druck-Harness.</summary>
+    /// (DruckLayout) komponiert - jede Zelle einpassend, OHNE automatische
+    /// Drehung (v0.21.41), identisch zur Vorschau ("Vorschau = Druck").
+    /// Internal fuer den kopflosen Druck-Harness.</summary>
     internal static void BlattZeichnen(Graphics g, PageSettings seite,
         List<(int nr, double bPt, double hPt)> stapel, List<Image> bilder,
         double skalierung, int proBlatt)
@@ -619,8 +617,7 @@ internal static class Program
         for (int i = 0; i < stapel.Count; i++)
         {
             var zelle = DruckLayout.Zelle(flaeche, spalten, zeilen, i);
-            var (ziel, drehen) = DruckLayout.SeiteInZelle(stapel[i].bPt, stapel[i].hPt, zelle, 0);
-            if (drehen) bilder[i].RotateFlip(RotateFlipType.Rotate90FlipNone);
+            var ziel = DruckLayout.SeiteInZelle(stapel[i].bPt, stapel[i].hPt, zelle, 0);
             g.DrawImage(bilder[i], ziel.X / 0.72f, ziel.Y / 0.72f, ziel.Width / 0.72f, ziel.Height / 0.72f);
         }
     }

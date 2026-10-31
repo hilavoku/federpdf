@@ -2,6 +2,21 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
 
+## v0.21.41 — „An Seitenrand anpassen" dreht nicht mehr
+- Fehlerbehobung (Nutzer-Fund: „Fahrzeugschein wird um 90 Grad gedreht"):
+  Der Einpass-Modus drehte PDF-Seiten automatisch um 90°, sobald Seiten-
+  und Blattform kollidierten (Querseite auf Hochformat-Papier) — das füllte
+  zwar das Papier, drehte aber den Inhalt. Seit es die Ausrichtungs-Auswahl
+  gibt, steuert der Nutzer das Blatt selbst: **„An Seitenrand anpassen"
+  skaliert jetzt nur noch** — Seiten drucken immer so, wie sie angezeigt
+  werden. Querformate (z. B. Fahrzeugschein) bleiben aufrecht; wer sie
+  blattfüllend will, stellt die Ausrichtung auf Querformat. Gilt für
+  Einzel- und N-up-Druck sowie für die Vorschau (Vorschau = Druck).
+- Nachweise: Druck-Harness erweitert (Querseite mit rotem Balken oben:
+  Vorschau-Komposit aufrecht, Seitenränder weiß; 28 Checks PASS) + echter
+  Druck nach PDF mit PyMuPDF-Prüfprotokoll (Bild-BBox breiter als hoch,
+  Balken OBEN, linke/rechte BBox-Ränder weiß — 24 Checks PASS).
+
 ## v0.21.40 — Druckdialog: Papierformat, Ausrichtung und Seiten pro Blatt
 - Neu im Druckdialog (PDFgear-Parität): **Papierformat** (Formate des
   gewählten Druckers), **Seiten pro Blatt** (1/2/4/6/9/16 — mehrere PDF-

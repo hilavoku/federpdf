@@ -34,7 +34,7 @@ os.makedirs(SIGN_DIR, exist_ok=True)
 
 app = FastAPI(title="FederPDF")
 
-APP_VERSION = "0.21.50"   # wird im Über-Dialog (Klick auf Logo/FederPDF) angezeigt
+APP_VERSION = "0.21.51"   # wird im Über-Dialog (Klick auf Logo/FederPDF) angezeigt
 
 
 @app.middleware("http")
@@ -1245,6 +1245,20 @@ async def image_rotate(did: str, page: int = Form(...), xref: int = Form(0),
 @app.post("/api/save/{did}")
 def save(did: str, flatten: int = 0):
     d = _doc(did)
+    # Ziel schreibbar? (Nutzer-Fund 05.11.2026: aus einer Mail geoeffnetes PDF
+    # liegt als read-only/gesperrte Datei im Temp-Bereich - ein Save dorthin
+    # schlug fehl und hinterliess ein GESCHLOSSENES Dokument im Store, danach
+    # starben alle Folgerequests still, auch "Speichern unter".) Pruefung VOR
+    # dem Einbrennen: bake wuerde die beweglichen Annotationen zerstoeren,
+    # obwohl ohnehin nicht gespeichert werden kann. 423 = Ziel gesperrt,
+    # die UI leitet automatisch auf "Speichern unter" um.
+    path = docs[did]["path"]
+    try:
+        with open(path, "r+b"):
+            pass
+    except OSError as e:
+        raise HTTPException(423, "Ziel nicht schreibbar (" + str(e) +
+                            ") - bitte 'Speichern unter' waehlen")
     seiten = []
     if flatten:
         # Gespacete Freitexte ZUERST zeichenweise als Seiteninhalt einsetzen
@@ -1297,16 +1311,25 @@ def save(did: str, flatten: int = 0):
         seiten = [i for i in range(d.page_count) if d[i].annots()]   # UI laedt diese Seitenbilder neu
         d.bake(widgets=False)
         undo_stacks[did] = []
-    path = docs[did]["path"]
 
     def neu_schreiben(garbage: int):
         """RAM-Zustand komplett neue Datei schreiben (alter Exception-Fallback
         mit garbage=3; der Notfallpfad nach saveIncr nutzt garbage=0, damit die
-        Xref-Nummern stabil bleiben und Undo-Referenzen ueberleben)."""
+        Xref-Nummern stabil bleiben und Undo-Referenzen ueberleben).
+        Reihenfolge-Falle (Nutzer-Fund 05.11.2026): frueher close() VOR move() -
+        schlug das move auf dem gesperrten Ziel fehl (Mail-Anhang, read-only,
+        Lock durchs Mail-Programm), blieb ein GESCHLOSSENES Dokument im Store
+        und jeder Folgerequest starb. Jetzt: bei move-Fehler das Doc aus der
+        frisch geschriebenen tmp-Datei (= aktueller RAM-Stand mit allen
+        Annotationen) wiederbeleben."""
         tmp = path + ".tmp"
         d.save(tmp, garbage=garbage, deflate=True)
         d.close()
-        shutil.move(tmp, path)
+        try:
+            shutil.move(tmp, path)
+        except Exception:
+            docs[did]["doc"] = pymupdf.open(tmp)
+            raise
         docs[did]["doc"] = pymupdf.open(path)
 
     try:
@@ -1362,7 +1385,7 @@ def saveas(did: str, path: str, flatten: int = 0):
     d = _doc(did)
     path = os.path.normpath(path)
     if path.lower() == os.path.normpath(docs[did]["path"]).lower():
-        raise HTTPException(400, "Ziel ist die bereits geöffnete Datei – bitte 'Speichern' nutzen")
+        raise HTTPException(400, "Ziel ist die bereits geöffnete Datei – bitte anderen Namen oder Ordner wählen")
     try:
         if flatten:
             d.bake(widgets=False)

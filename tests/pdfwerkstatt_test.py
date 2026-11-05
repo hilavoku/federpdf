@@ -1102,6 +1102,40 @@ try:
     else:
         check("Korruptions-Nachbau moeglich (letztes xref hat /Prev)", False, "")
 
+    # --- v0.21.51: Speichern auf schreibgeschuetztem Ziel (Mail-Anhang-Falle) ---
+    # Repro: aus einer Mail geoeffnetes PDF liegt read-only/gesperrt im Temp-
+    # Ordner. Frueher: saveIncr-Fehler -> neu_schreiben schloss das Dokument,
+    # das move aufs Ziel schlug fehl -> GESCHLOSSENES Doc im Store, danach
+    # starben alle Folgerequests mit 500 (in der UI kippte sogar "Speichern
+    # unter" still beim .json()-Parse der Text-500). Jetzt: 423 zielgesperrt,
+    # Dokument bleibt unangetastet funktionsfaehig.
+    import pymupdf as _pm
+    ro_pfad = os.path.join(FIXDIR, "pw_test_readonly.pdf")
+    rsrc = _pm.open()
+    rsrc.new_page().insert_text((72, 90), "Mail-Anhang", fontsize=12)
+    rsrc.save(ro_pfad)
+    rsrc.close()
+    rod = requests.get(BASE + "/api/open", params={"q": ro_pfad}, timeout=10).json()
+    roid = rod["id"]
+    requests.post(f"{BASE}/api/annot/text/{roid}", data={
+        "page": "0", "rect": "[100,100,260,132]", "text": "Anmerkung",
+        "size": "16", "font": "helv", "color": "0,0,0"}, timeout=10)
+    os.chmod(ro_pfad, 0o444)   # Windows: setzt das read-only-Attribut
+    r = requests.post(f"{BASE}/api/save/{roid}", timeout=15)
+    check("Save auf read-only-Ziel: 423 statt Kollaps", r.status_code == 423,
+          f"{r.status_code} {r.text[:80]}")
+    h = requests.get(f"{BASE}/api/hasannots/{roid}", timeout=10)
+    check("Nach 423 lebt das Dokument (hasannots 200, any=true)",
+          h.status_code == 200 and h.json().get("any") is True, f"{h.status_code} {h.text[:80]}")
+    os.chmod(ro_pfad, 0o666)   # Schreibschutz aufheben: gleicher did speichert normal
+    r = requests.post(f"{BASE}/api/save/{roid}", timeout=15)
+    check("Nach Aufheben: normales Speichern ok", r.ok and r.json().get("ok"),
+          f"{r.status_code} {r.text[:80]}")
+    vdoc = _pm.open(ro_pfad)
+    check("Anmerkung steht danach in der Datei",
+          any(a.type[1] == "FreeText" for p in vdoc for a in (p.annots() or [])), "")
+    vdoc.close()
+
     # --- Sperrzustand nach Server-Neustart (zweiter Prozess, anderer Port) ---
     PORT2 = PORT + 1
     srv2 = subprocess.Popen([EXE, "--port", str(PORT2)], creationflags=subprocess.CREATE_NO_WINDOW)

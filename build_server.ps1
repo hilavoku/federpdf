@@ -13,7 +13,7 @@ if (-not (Test-Path (Join-Path $root "venv\Scripts\python.exe"))) {
 }
 
 Write-Host "=== pyinstaller sicherstellen ==="
-& "$venv\python.exe" -m pip install --quiet --disable-pip-version-check pyinstaller pymupdf fastapi "uvicorn[standard]" python-multipart pillow cryptography
+& "$venv\python.exe" -m pip install --quiet --disable-pip-version-check pyinstaller pymupdf fastapi "uvicorn[standard]" python-multipart pillow cryptography==46.0.3   # PIN: neuere haben keine win_arm64-Wheels (Notebook-ARM64-Build)
 Write-Host "pip exit: $LASTEXITCODE"
 
 $mp = & "$venv\python.exe" -c "import importlib.util; print('multipart' if importlib.util.find_spec('multipart') else ('python_multipart' if importlib.util.find_spec('python_multipart') else 'none'))"

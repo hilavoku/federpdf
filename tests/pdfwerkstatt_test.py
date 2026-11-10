@@ -1036,6 +1036,12 @@ try:
           r.headers.get("content-type") == "image/jpeg"
           and abs(djv.size[0] - b0 / 72.0 * 150) < 3 and abs(djv.size[1] - h0 / 72.0 * 150) < 3,
           f"{r.headers.get('content-type')} {djv.size}")
+    r = requests.get(f"{BASE}/api/druckseite/{pdid}?nr=0&dpi=150&grau=1", timeout=30)
+    dgv = _PILImage.open(io.BytesIO(r.content))
+    check("druckseite grau=1: Graustufen-PNG gleicher Masse (S/W-Druck laeuft serverseitig)",
+          r.headers.get("content-type") == "image/png" and dgv.mode == "L"
+          and abs(dgv.size[0] - b0 / 72.0 * 150) < 3 and abs(dgv.size[1] - h0 / 72.0 * 150) < 3,
+          f"{r.headers.get('content-type')} {dgv.mode} {dgv.size}")
     # Annotationen muessen im Druckbild liegen (annots=True): Stempel setzen und
     # seine Farbe an der Stempelmitte nachweisen. Eigene Wegwerf-Signatur, denn
     # ts1 wird frueher in der Suite umbenannt.

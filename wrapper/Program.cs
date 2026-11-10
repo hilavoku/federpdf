@@ -500,6 +500,18 @@ internal static class Program
                     if (r != null && r.X > 0) dpi = Math.Clamp(r.X, 150, 600);
                 }
                 catch { }
+                // PIXELBUDGET: Riesenseiten (Scans mit 2400 pt und mehr) wuerden
+                // bei 600 dpi Gigabyte-Pixmapen bauen - im Server wie im Treiber-
+                // Filter. Auf ~100 Mio px je Seite deckeln (A4 bei 600 dpi =
+                // 35 Mio px bleibt unberuehrt; eine 2400-pt-Scanseite druckt dann
+                // mit ~250 dpi - aufs Papier gleich gross, nur weicher).
+                foreach (int nr in liste)
+                {
+                    double flaeche = masse[nr][0] * masse[nr][1];
+                    if (flaeche <= 0) continue;
+                    double maxDpi = Math.Sqrt(100e6 * 72.0 * 72.0 / flaeche);
+                    if (dpi > maxDpi) dpi = Math.Max(150, (int)maxDpi);
+                }
 
                 using var druck = new PrintDocument { PrinterSettings = ps };
                 druck.DefaultPageSettings.Margins = new Margins(0, 0, 0, 0);
@@ -526,28 +538,16 @@ internal static class Program
                     index = bis;
                     using var http = new HttpClient(new System.Net.Http.HttpClientHandler { UseProxy = false })
                     { Timeout = TimeSpan.FromSeconds(120) };
-                    // KOPIEN der Seitenbilder (new Bitmap): GDI+ liest Image.FromStream
-                    // traege aus dem Stream - die hier sofort geschlossenen Streams
-                    // waeren beim spaeteren Malvorgang weg -> AccessViolation
-                    // (Nutzer-Fund 22.10., s. SeiteVomServer)
-                    var bilder = new List<Image>();
-                    try
-                    {
-                        foreach (var (nr, _, _) in stapel)
-                        {
-                            using var antwort = http.GetStreamAsync(
-                                $"http://127.0.0.1:{port}/api/druckseite/{did}?nr={nr}&dpi={dpi}&annots={(mitAnnots ? 1 : 0)}").Result;
-                            using var ms = new MemoryStream();
-                            antwort.CopyTo(ms);
-                            ms.Position = 0;
-                            using var roh = System.Drawing.Image.FromStream(ms);
-                            var b = new Bitmap(roh);
-                            if (!farbe) { var grau = Graustufen(b); b.Dispose(); b = grau; }
-                            bilder.Add(b);
-                        }
-                        BlattZeichnen(ev.Graphics!, ev.PageSettings, stapel, bilder, skalierung, proBlatt, randPt, oben);
-                    }
-                    finally { foreach (var b in bilder) b.Dispose(); }
+                    // Seiten als PNG-Bytes holen (verlustfrei; S/W rendert der
+                    // Server gleich in Graustufen, grau=1). BlattAusgeben
+                    // reicht sie - wenn der Treiber mitspielt - unveraendert
+                    // durch und dekodiert sonst selbst (Fallback).
+                    var pngs = new List<byte[]>();
+                    foreach (var (nr, _, _) in stapel)
+                        pngs.Add(http.GetByteArrayAsync(
+                            $"http://127.0.0.1:{port}/api/druckseite/{did}?nr={nr}&dpi={dpi}&annots={(mitAnnots ? 1 : 0)}&grau={(farbe ? 0 : 1)}").Result);
+                    BlattAusgeben(ev.Graphics!, ev.PageSettings, stapel, pngs,
+                        skalierung, proBlatt, randPt, oben, farbe);
                     ev.HasMorePages = index < liste.Count;
                 };
                 druck.Print();
@@ -682,12 +682,18 @@ internal static class Program
         g.PageUnit = GraphicsUnit.Display;
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
         g.SmoothingMode = SmoothingMode.HighQuality;
+        var ziel = Zielrechtecke(seite, new List<(int, double, double)> { (0, bPt, hPt) },
+                                 skalierung, 1, randPt, oben)[0];
+        BildGebandertZeichnen(g, bild, ziel);
+    }
 
-        // Druckbare Flaeche in pt (korrigiert). GDI-Ursprung beim Drucken
-        // (OriginAtMargins=false, Doku) ist bereits die Ecke der druckbaren
-        // Flaeche - die X/Y-Offsets gehoeren NICHT in die Zeichnung (sonst
-        // Hardware-Rand doppelt). REIHENFOLGE: erst Ursprung nullen, DANN den
-        // Nutzer-Rand einziehen (sonst verliert der Inset seine Position)
+    /// <summary>Druckbare Flaeche in pt, GDI-Ursprung genullt (OriginAtMargins=
+    /// false, Doku: der Ursprung liegt bereits an der Ecke der druckbaren
+    /// Flaeche - X/Y gehoeren NICHT in die Zeichnung) und um den Nutzer-Rand
+    /// eingezogen. REIHENFOLGE: erst Ursprung nullen, DANN den Rand (sonst
+    /// verliert der Inset seine Position).</summary>
+    private static RectangleF DruckbarMitRand(PageSettings seite, double randPt)
+    {
         var druckbar = DruckLayout.DruckbareFlaeche(seite, seite.Bounds.Width * 0.72, seite.Bounds.Height * 0.72);
         druckbar.X = 0f;
         druckbar.Y = 0f;
@@ -697,18 +703,47 @@ internal static class Program
             if (druckbar.Width < 1f || druckbar.Height < 1f)
                 druckbar = new RectangleF(druckbar.X, druckbar.Y, 1f, 1f);
         }
-        float ax = druckbar.X / 0.72f, ay = druckbar.Y / 0.72f;
-        float aw = Math.Max(1f, druckbar.Width / 0.72f), ah = Math.Max(1f, druckbar.Height / 0.72f);
+        return druckbar;
+    }
 
-        double b100 = bPt / 72.0 * 100.0, h100 = hPt / 72.0 * 100.0;   // Seite in 1/100 Zoll
-        double skala = skalierung <= 0
-            ? Math.Min(aw / b100, ah / h100)
-            : skalierung;
-        double b = b100 * skala, h = h100 * skala;
-        BildGebandertZeichnen(g, bild, new RectangleF(
-            ax + (float)((aw - b) / 2.0),
-            ay + (float)(oben ? 0 : (ah - h) / 2.0),   // kopfbuendig auf Wunsch
-            (float)b, (float)h));
+    /// <summary>Zielrechtecke (1/100 Zoll) je Stapelseite - die GEMEINSAME
+    /// Geometrie fuer Bitmap-Zeichnung (BlattZeichnen) und PNG-Durchreichen
+    /// (BlattZeichnenPng): 1-up einpassend (feste Skalierung falls gewaehlt,
+    /// kopfbuendig auf Wunsch), N-up ins DruckLayout-Gitter.</summary>
+    internal static List<RectangleF> Zielrechtecke(PageSettings seite,
+        List<(int nr, double bPt, double hPt)> stapel, double skalierung, int proBlatt,
+        double randPt, bool oben)
+    {
+        var ergebnis = new List<RectangleF>();
+        if (proBlatt <= 1)
+        {
+            var (_, bPt, hPt) = stapel[0];
+            var druckbar = DruckbarMitRand(seite, randPt);          // pt
+            // ACHTUNG: nach dem Rand-Einziehen (Inflate negativ) liegt
+            // druckbar.X/Y beim Rand, nicht bei 0 - das Offset gehoert MIT
+            // in die Zielposition (Refaktor-Falle: ohne ax/ay wandert das
+            // Bild bei Nutzer-Rand an den Hardware-Rand)
+            float ax = druckbar.X / 0.72f, ay = druckbar.Y / 0.72f;
+            float aw = Math.Max(1f, druckbar.Width / 0.72f), ah = Math.Max(1f, druckbar.Height / 0.72f);
+            double b100 = bPt / 72.0 * 100.0, h100 = hPt / 72.0 * 100.0;   // Seite in 1/100 Zoll
+            double skala = skalierung <= 0 ? Math.Min(aw / b100, ah / h100) : skalierung;
+            double b = b100 * skala, h = h100 * skala;
+            ergebnis.Add(new RectangleF(
+                ax + (float)((aw - b) / 2.0),
+                ay + (float)(oben ? 0 : (ah - h) / 2.0),   // kopfbuendig auf Wunsch
+                (float)b, (float)h));
+            return ergebnis;
+        }
+        var flaeche = DruckbarMitRand(seite, randPt);
+        var (spalten, zeilen) = DruckLayout.Gitter(stapel.Count, flaeche.Width, flaeche.Height,
+                                                   stapel[0].bPt, stapel[0].hPt);
+        for (int i = 0; i < stapel.Count; i++)
+        {
+            var zelle = DruckLayout.Zelle(flaeche, spalten, zeilen, i);
+            var ziel = DruckLayout.SeiteInZelle(stapel[i].bPt, stapel[i].hPt, zelle, 0, oben);
+            ergebnis.Add(new RectangleF(ziel.X / 0.72f, ziel.Y / 0.72f, ziel.Width / 0.72f, ziel.Height / 0.72f));
+        }
+        return ergebnis;
     }
 
     /// <summary>Einen Druck-Blattbogen zeichnen (Koordinaten 1/100 Zoll):
@@ -719,7 +754,7 @@ internal static class Program
     /// randPt = Nutzer-Seitenrand (mm in pt), allseitig INNERHALB der
     /// druckbaren Flaeche einziehen - Einpassen/Zentrieren rechnet mit der
     /// schmaleren Flaeche (symmetrischer Rahmen). Internal fuer den kopflosen
-    /// Druck-Harness.</summary>
+    /// Druck-Harness. Das ist der BITMAP-Fallback (siehe BlattAusgeben).</summary>
     internal static void BlattZeichnen(Graphics g, PageSettings seite,
         List<(int nr, double bPt, double hPt)> stapel, List<Image> bilder,
         double skalierung, int proBlatt, double randPt = 0, bool oben = false)
@@ -728,38 +763,151 @@ internal static class Program
         g.PageUnit = GraphicsUnit.Display;
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
         g.SmoothingMode = SmoothingMode.HighQuality;
-
-        if (proBlatt <= 1)
-        {
-            var (_, bPt0, hPt0) = stapel[0];
-            SeiteEinpassen(g, seite, bilder[0], bPt0, hPt0, skalierung, randPt, oben);
-            return;
-        }
-
-        // Druckbare Flaeche in pt, orientierungskorrigiert (PrintableArea folgt
-        // der Landscape-DEVMODE nicht, Mess-Fund 31.10.2026), Nutzer-Rand
-        // einziehen; Zellen/Seiten in pt rechnen, Ziel-Rects zum Zeichnen nach
-        // 1/100 Zoll (/0,72)
-        var flaeche = DruckLayout.DruckbareFlaeche(seite, seite.Bounds.Width * 0.72, seite.Bounds.Height * 0.72);
-        // GDI-Ursprung = Ecke der druckbaren Flaeche (OriginAtMargins=false,
-        // wie SeiteEinpassen); REIHENFOLGE: erst nullen, dann Rand einziehen
-        flaeche.X = 0f;
-        flaeche.Y = 0f;
-        if (randPt > 0)
-        {
-            flaeche = RectangleF.Inflate(flaeche, -(float)randPt, -(float)randPt);
-            if (flaeche.Width < 1f || flaeche.Height < 1f)
-                flaeche = new RectangleF(flaeche.X, flaeche.Y, 1f, 1f);
-        }
-        var (spalten, zeilen) = DruckLayout.Gitter(stapel.Count, flaeche.Width, flaeche.Height,
-                                                   stapel[0].bPt, stapel[0].hPt);
+        var ziele = Zielrechtecke(seite, stapel, skalierung, proBlatt, randPt, oben);
         for (int i = 0; i < stapel.Count; i++)
+            BildGebandertZeichnen(g, bilder[i], ziele[i]);
+    }
+
+    // --- PNG-Durchreichen (GDI-Passthrough): das komprimierte Seitenbild geht
+    // UNVERAENDERT an den Treiber (StretchDIBits mit BI_PNG), statt als
+    // dekodierte Bitmap, die der GDI->XPS-Konverter (MXDC) in ~2-MB-Baender
+    // zerlegt und FARBIGE Baender als JPEG-KACHELN kodiert. Genau die kippen
+    // beim Rastern in den Druckerstrom (Nutzer-Fund 10.11.2026, Gothaer-
+    // Beitragsrechnung am HP 9010/IPP-Klassentreiber: oberes Drittel mit um
+    // 5,3 mm versetzten Baendern und schwarzen Querlinien in exakt der Breite
+    // des Seitenbilds - Stossgrenzen kartenweise auf den JPEG-Kachelgrenzen,
+    // verlustfreie Baender kamen immer korrekt; dasselbe Bild wie beim
+    // Fahrzeugschein-Fund "unterster Zentimeter unlesbar"). Ohne JPEG-Kacheln
+    // gibt es nichts zu vertauschen - und der Ausdruck verliert die JPEG-
+    // Artefakte dazu. Klassische GDI-Treiber ohne CHECKPNGFORMAT nutzen den
+    // Bitmap-Fallback (BlattZeichnen), der bleibt scharf geschaltet.
+    private const int QUERYESCSUPPORT = 8, CHECKPNGFORMAT = 4120, BI_PNG = 5;
+    private const uint SRCCOPY = 0x00CC0020;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BITMAPINFOHEADER
+    {
+        public int biSize, biWidth, biHeight;
+        public short biPlanes, biBitCount;
+        public int biCompression, biSizeImage, biXPelsPerMeter, biYPelsPerMeter, biClrUsed, biClrImportant;
+    }
+
+    [DllImport("gdi32.dll")]
+    private static extern int ExtEscape(IntPtr hdc, int nEscape, int cbInput, ref int lpszInData, int cbOutput, IntPtr lpszOutData);
+    [DllImport("gdi32.dll")]
+    private static extern int ExtEscape(IntPtr hdc, int nEscape, int cbInput, byte[] lpszInData, int cbOutput, out int lpszOutData);
+    [DllImport("gdi32.dll", SetLastError = true)]
+    private static extern int StretchDIBits(IntPtr hdc, int xDest, int yDest, int wDest, int hDest,
+        int xSrc, int ySrc, int wSrc, int hSrc, byte[] bits, ref BITMAPINFOHEADER bmi, uint usage, uint rop);
+
+    /// <summary>Pixelmasse aus dem PNG-IHDR lesen (kein Dekodieren noetig).</summary>
+    private static (int breite, int hoehe) PngMasse(byte[] png)
+    {
+        if (png.Length >= 24 && png[12] == (byte)'I' && png[13] == (byte)'H')
+            return ((png[16] << 24) | (png[17] << 16) | (png[18] << 8) | png[19],
+                    (png[20] << 24) | (png[21] << 16) | (png[22] << 8) | png[23]);
+        return (0, 0);
+    }
+
+    /// <summary>Kann dieser Drucker das PNG unvermittelt uebernehmen?
+    /// (v4/XPS-Drucker via MXDC: ja; klassische GDI-Treiber: nein)</summary>
+    private static bool PngDurchreichenMoeglich(IntPtr hdc, byte[] png)
+    {
+        try
         {
-            var zelle = DruckLayout.Zelle(flaeche, spalten, zeilen, i);
-            var ziel = DruckLayout.SeiteInZelle(stapel[i].bPt, stapel[i].hPt, zelle, 0, oben);
-            BildGebandertZeichnen(g, bilder[i], new RectangleF(
-                ziel.X / 0.72f, ziel.Y / 0.72f, ziel.Width / 0.72f, ziel.Height / 0.72f));
+            int esc = CHECKPNGFORMAT;
+            int ok = -1;
+            return ExtEscape(hdc, QUERYESCSUPPORT, sizeof(int), ref esc, 0, IntPtr.Zero) > 0
+                && ExtEscape(hdc, CHECKPNGFORMAT, png.Length, png, sizeof(int), out ok) > 0 && ok == 1;
         }
+        catch { return false; }
+    }
+
+    /// <summary>Seitenbild als PNG direkt an den Drucker-DC (ziel in 1/100 Zoll,
+    /// dpi = Geraeteaufloesung des Graphics). false = abgelehnt/fehlgeschlagen.</summary>
+    private static bool PngBlit(IntPtr hdc, byte[] png, RectangleF ziel, float dpiX, float dpiY)
+    {
+        var (breite, hoehe) = PngMasse(png);
+        if (breite <= 0 || hoehe <= 0) return false;
+        var bmi = new BITMAPINFOHEADER
+        {
+            biSize = Marshal.SizeOf<BITMAPINFOHEADER>(),
+            biWidth = breite,
+            biHeight = -hoehe,                // top-down
+            biPlanes = 1,
+            biBitCount = 0,
+            biCompression = BI_PNG,
+            biSizeImage = png.Length,
+        };
+        int z = StretchDIBits(hdc,
+            (int)Math.Round(ziel.X * dpiX / 100.0), (int)Math.Round(ziel.Y * dpiY / 100.0),
+            (int)Math.Round(ziel.Width * dpiX / 100.0), (int)Math.Round(ziel.Height * dpiY / 100.0),
+            0, 0, breite, hoehe, png, ref bmi, 0, SRCCOPY);
+        return z == hoehe;                    // Erfolg = Anzahl kopierter Scanlines
+    }
+
+    /// <summary>Blatt wie BlattZeichnen, aber die Seitenbilder werden als PNG
+    /// durchgereicht (kein Dekodieren, keine JPEG-Kacheln im Spool). Pruefung
+    /// und alle Blits in EINEM GetHdc-Zyklus - Graphics duldet keine zweite
+    /// HDC-Entleihung, solange die erste abgeschlossen ist (InvalidOperationException
+    /// "Object is currently in use elsewhere", Fund am HP-IPP-Klassentreiber).</summary>
+    private static bool BlattZeichnenPng(Graphics g, PageSettings seite,
+        List<(int nr, double bPt, double hPt)> stapel, List<byte[]> pngs,
+        double skalierung, int proBlatt, double randPt, bool oben)
+    {
+        if (stapel.Count == 0 || stapel.Count > pngs.Count) return false;
+        g.PageUnit = GraphicsUnit.Display;
+        g.ResetTransform();                       // DC in den Urzustand, Pixel sind Pixel
+        // dpiX/dpiY VOR GetHdc lesen: zwischen GetHdc und ReleaseHdc darf keine
+        // Graphics-Methode angeruehrt werden (InvalidOperationException)
+        float dpiX = g.DpiX, dpiY = g.DpiY;
+        var ziele = Zielrechtecke(seite, stapel, skalierung, proBlatt, randPt, oben);
+        IntPtr hdc = g.GetHdc();
+        try
+        {
+            if (!PngDurchreichenMoeglich(hdc, pngs[0])) return false;
+            for (int i = 0; i < stapel.Count; i++)
+                if (!PngBlit(hdc, pngs[i], ziele[i], dpiX, dpiY)) return false;
+            return true;
+        }
+        catch { return false; }
+        finally { g.ReleaseHdc(hdc); }
+    }
+
+    /// <summary>Eine Blattseite ausgeben: PNG durchreichen, wenn der Treiber
+    /// das kann (je Blatt geprueft - CHECKPNGFORMAT ist ein billiger Escape),
+    /// sonst dekodieren und als Bitmap zeichnen. Internal fuer den kopflosen
+    /// Druck-Harness - der prueft genau diesen Weg E2E.</summary>
+    internal static void BlattAusgeben(Graphics g, PageSettings seite,
+        List<(int nr, double bPt, double hPt)> stapel, List<byte[]> pngs,
+        double skalierung, int proBlatt, double randPt, bool oben, bool farbe)
+    {
+        if (stapel.Count == 0 || stapel.Count > pngs.Count) return;
+        if (BlattZeichnenPng(g, seite, stapel, pngs, skalierung, proBlatt, randPt, oben)) return;
+        var bilder = new List<Image>();
+        try
+        {
+            foreach (var png in pngs)
+            {
+                // KOPIE als eigenstaendiges Bitmap: GDI+ liest Image.FromStream
+                // traege aus dem Stream - der lokale MemoryStream waere per GC
+                // einholbar und der Puffer beim Malvorgang weg -> AccessViolation
+                using var ms = new MemoryStream(png);
+                using var roh = System.Drawing.Image.FromStream(ms);
+                var b = new Bitmap(roh);
+                // S/W: der Server liefert bereits grau (grau=1); gegen einen
+                // aelteren Server (der das noch nicht kennt) faerben wir selbst
+                if (!farbe && roh.PixelFormat != System.Drawing.Imaging.PixelFormat.Format8bppIndexed)
+                {
+                    var grau = Graustufen(b);
+                    b.Dispose();
+                    b = grau;
+                }
+                bilder.Add(b);
+            }
+            BlattZeichnen(g, seite, stapel, bilder, skalierung, proBlatt, randPt, oben);
+        }
+        finally { foreach (var b in bilder) b.Dispose(); }
     }
 
     private static int GetFreePort()

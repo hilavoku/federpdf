@@ -1,6 +1,48 @@
 # FederPDF — Changelog
 
-Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-10-26.
+Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-11-10.
+
+## v0.21.52 — Druckbilder ohne JPEG-Kacheln (Garbled-Druck behoben)
+- **Fehlerbehobung (Nutzer-Fund 10.11.2026, Gothaer-Beitragsrechnung am
+  HP OfficeJet Pro 9010: „oberes Drittel der 1. Seite unlesbar — Zeilen
+  doppelt/dreifach übereinander, verschoben, schwarze Querlinien"; gleiches
+  Bild beim Fahrzeugschein-Fund v0.21.49):** FederPDF druckte jede Seite
+  als dekodierte Bitmap über GDI+. Der GDI→XPS-Konverter (MXDC) zerlegt
+  solche Bitmaps in ~2-MB-Bänder und kodiert **farbige Bänder als
+  JPEG-Kacheln** (5,3 mm hoch) — und genau die kippten auf dem Weg zum
+  Drucker: Papierabdruck per Homographie vermessen, die gestörten Bänder
+  liegen kartenweise exakt auf den JPEG-Kachelgrenzen, die schwarzen
+  Linien haben exakt die Breite des Seitenbilds, und nur JPEG-Kacheln
+  sind betroffen (verlustfreie Grau-Bänder kamen immer korrekt, Seite 2
+  ohne Farbe komplett sauber). Der Windows-Datenstrom war dabei wieder-
+  holbar fehlerfrei (5/5 pixelidentisch) — die Kacheln kippen erst beim
+  echten Druck, nicht deterministisch.
+- **Abhilfe: PNG-Durchreichen (GDI-Passthrough).** Der Wrapper reicht das
+  komprimierte Seitenbild jetzt mit `StretchDIBits`/`BI_PNG` unverändert
+  an den Treiber durch (`CHECKPNGFORMAT`-geprüft; Prüfung und Blits in
+  EINEM HDC-Zyklus — Graphics duldet keine zweite Entleihung, sonst
+  „Object is currently in use elsewhere"). Im Spool liegt damit **ein
+  verlustfreies Bild pro Seite** statt dutzender Kacheln mit JPEG —
+  nichts mehr zu vertauschen, und der Ausdruck verliert die JPEG-
+  Artefakte dazu (Kreisrand/QR-Code messbar sauberer). Klassische
+  GDI-Treiber ohne PNG-Passthrough nutzen den bisherigen Bitmap-Pfad
+  weiter (pixelgenau unverändert, per Datenstrom-Hash bewiesen).
+- **S/W druckt der Server gleich in Graustufen** (`/api/druckseite`
+  kennt `grau=1`): kleiner, schneller, keine Farbmatrix im Client.
+  Schwarzweiß war KEIN Ausweg aus dem Kachel-Fehler (auch Graustufen-
+  Bitmaps erzeugen farbige JPEG-Kacheln im Spool — bewiesen).
+- **Pixelbudget für Riesenseiten:** Scans mit 2400-pt-Seiten hätten bei
+  600 dpi Gigabyte-Pixmapen gebaut (Server wie Treiberfilter). Der
+  Druck-DPI wird auf ~100 Mio px je Seite gedeckelt (A4@600 = 35 Mio
+  unberührt; eine 2400-pt-Seite druckt mit ~250 dpi — aufs Papier
+  gleich groß).
+- `build_server.ps1` pinnt `cryptography==46.0.3` (neuere Versionen
+  haben keine win_arm64-Wheels — der Notebook-Build bricht sonst).
+- Beweise: HP-Datenstrom per Druck-in-Datei abgefangen (Auftrag bytegleich
+  zum echten nachgestellt), neue Pfade gegen Referenz-Strom-Hashes geprüft,
+  Querformat/N-up/Graustufen-Passthrough gegen Microsoft Print to PDF
+  verifiziert. Suite +1 Check (`grau=1`): **143 PASS**. Server
+  `APP_VERSION` → 0.21.52. Sichtprobe am HP durch den Nutzer ausstehend.
 
 ## v0.21.50 — Farbmodus am Treiber + schnellerer Druckstart
 - **Fehlerbehobung (Nutzer-Fund: „auf Farbe gestellt, Ausdruck blieb S/W"):**

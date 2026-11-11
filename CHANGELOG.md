@@ -2,6 +2,23 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-11-11.
 
+## v0.21.55 — Gesperrter Text bleibt beim Zoomen in seinen Formularzellen
+- **Fehlerbehobung (Nutzer-Fund mit Screenshots, Kilometerstand/Datum in
+  Kästchenfelder eingetragen: „je nach Zoomfaktor steht der von mir
+  eingegebene Text woanders"):** Text-Annotationen mit **Zeichenabstand**
+  (Sperren, z. B. Ziffern einzeln in Formular-Kästchen) verloren beim
+  Zoomen ihre Laufweite: `reposition` skalierte beim Zoom zwar Position,
+  Box und Schriftgröße mit dem neuen Maßstab — aber NICHT den
+  `letterSpacing` des Overlay-Divs, der stand weiterhin auf dem px-Wert
+  des Bau-Zooms. Bei 362 % saßen die Ziffern exakt in den Kästchen, bei
+  551 % lief derselbe Text ~2 Zellenbreiten zu kurz und „rutschte" in
+  falsche Zellen. Seit v0.14.4 latent; erst die v0.21.53-Reparatur des
+  Zeichenabstands machte ihn alltäglich sichtbar.
+- **Abhilfe:** Das Overlay merkt seinen Abstand jetzt als `_ls` (neben
+  `_fs` für die Schriftgröße), und `reposition` setzt `letterSpacing =
+  _ls × k` mit um. Signaturen sind nicht betroffen (deren
+  `background-size: 100 % 100 %` skaliert von jeher mit).
+
 ## v0.21.54 — Verschieben nach Zoom landet am Ziel statt „auf einmal weg"
 - **Fehlerbehobung (Nutzer-Fund: „eingegebenen Text mit der Maus verschieben
   wollen — ist auf einmal weg; erst beim Zoomen erscheint er wieder an der

@@ -1456,6 +1456,7 @@ function reposition(el, k) {
   if (el.classList.contains('txtspan')) { textspanForm(el, k); return; }   // Textebene: Form + scaleX neu
   if (el._pdfRect) positionRect(el, el._pdfRect, k);
   if (el._fs != null) el.style.fontSize = (el.classList.contains('winput') ? Math.max(9, el._fs * k / 1.1) : el._fs * k) + 'px';
+  if (el._ls != null) el.style.letterSpacing = (el._ls * k) + 'px';   // Zeichenabstand MIT skalieren (Zoom-Drift-Falle v0.21.55: stand auf Bau-k, gesperrte Texte liefen nach Zoom zu kurz und "rutschten" in falsche Formularzellen)
   if (el._annot && (el._annot.type === 'shape' || el._annot.type === 'markup'))
     shapeObjZeichnen(el, el._annot, k);   // Strichdicke/Quads/Innenleben skalieren mit
 }
@@ -1906,6 +1907,7 @@ async function addAnnots(img) {
       const [ff, fw, fs] = famCss(a.font);
       d.style.fontFamily = ff; d.style.fontWeight = fw; d.style.fontStyle = fs;
       d._fs = a.size;
+      d._ls = a.spacing || 0;   // fuer reposition: Zoom muss den Zeichenabstand mitskalieren (v0.21.55)
       d.style.fontSize = (a.size * k) + 'px';
       d.style.letterSpacing = ((a.spacing || 0) * k) + 'px';
       if (a.leading && a.leading > 0 && a.size > 0) d.style.lineHeight = (a.leading / a.size) + '';   // Zeilenraster wie Original

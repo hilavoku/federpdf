@@ -2514,10 +2514,25 @@ async function rotateDivAktualisieren(div, j) {
   selectAnnot({div});
 }
 
+/* Zoom-Falle (v0.21.54, Nutzer-Fund "Text beim Verschieben auf einmal weg"):
+   Die Overlay-Handler bekommen ihr k aus dem Closure des BAU-Zeitpunkts
+   (addAnnots/addImageInfos). Nach jedem Zoom re-rendern und verschieben
+   resizeWrap/reposition die Overlays mit NEUEM Massstab - img.dataset.k ist
+   stets aktuell, die Closure bleibt aber alt. Der naechste Zug rechnete Delta
+   UND Ziellage mit dem alten k: Das Div landete meilenweit daneben ("weg"),
+   erst der naechste Zoom holte es per reposition aus _pdfRect zurueck (und
+   auch der Server bekam das Ziel bereits im alten Massstab mitgeteilt).
+   Deshalb: Vor jedem Zug den JETZIGEN k von der Seite lesen. */
+function kAktuell(pageN, fallback) {
+  const img = document.querySelector('#page' + pageN + ' img');
+  const k = img && parseFloat(img.dataset.k);
+  return (k > 0) ? k : fallback;
+}
 function startDrag(ev, div, a, pageN, k, kind) {
   if (mode !== 'normal' && mode !== 'draw') return;   // Zeichen-Modus: Objekte direkt greifen
   if (mode === 'draw' && drawTool === 'erase') return; // Radiergummi loescht per Klick, kein Drag
   ev.preventDefault(); ev.stopPropagation();
+  k = kAktuell(pageN, k);   // Zoom-Falle v0.21.54: Closure-k kann alt sein
   selectAnnot({div});
   drag = {xref:a.xref, page:pageN, k, div, a, rect:a.rect.slice(), kind,
           startX:ev.clientX, startY:ev.clientY, aspect:(a.rect[3]-a.rect[1])/(a.rect[2]-a.rect[0])};
@@ -3517,6 +3532,7 @@ function bildAnzeigeRect(div, plac) {
 function startBildDrag(ev, div, pageN, k, kind) {
   if (mode !== 'normal' || !bearb || ev.button !== 0) return;   // Lesemodus: Bilder ruhen
   ev.preventDefault(); ev.stopPropagation();
+  k = kAktuell(pageN, k);   // Zoom-Falle v0.21.54: Closure-k kann alt sein
   selectBild(div);
   const box = div._pdfRect.slice();
   const sx = ev.clientX, sy = ev.clientY;
@@ -3566,6 +3582,7 @@ function startBildDrag(ev, div, pageN, k, kind) {
 function startBildRotate(ev, div, pageN, k) {
   if (mode !== 'normal' || !bearb || ev.button !== 0) return;   // Lesemodus: Bilder ruhen
   ev.preventDefault(); ev.stopPropagation();
+  k = kAktuell(pageN, k);   // Zoom-Falle v0.21.54: Vorschau-Bitmapmassstab aktuell halten
   selectBild(div);
   // Live-Vorschau: Bild in den Kasten laden und per CSS mitdrehen. Das Raster
   // unten zeigt bis zum Commit noch die alte Platzierung - der weisse

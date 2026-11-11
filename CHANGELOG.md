@@ -2,6 +2,28 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-11-11.
 
+## v0.21.54 — Verschieben nach Zoom landet am Ziel statt „auf einmal weg"
+- **Fehlerbehobung (Nutzer-Fund: „eingegebenen Text mit der Maus verschieben
+  wollen — ist auf einmal weg; erst beim Zoomen erscheint er wieder an der
+  verschobenen Stelle"):** Die Drag-Handler der Overlays (Texte, Signaturen,
+  Formen, Markierungen, eingebettete Bilder) bekamen ihren Maßstab `k` aus
+  dem Closure des **Bau-Zeitpunkts**. Nach jedem Zoom rendern `resizeWrap`/
+  `reposition` die Seitenbilder und Overlays mit NEUEM Maßstab neu —
+  `img.dataset.k` ist stets aktuell, die Closure blieb aber alt. Die nächste
+  Zieh-Bewegung rechnete Maus-Delta UND Ziellage mit dem veralteten Maßstab:
+  Das Objekt landete weit daneben oder außer Sicht („weg"), und auch der
+  Server bekam das Ziel im alten Maßstab mitgeteilt. Erst der nächste Zoom
+  holte die Anzeige über `reposition` aus dem korrekten `_pdfRect` zurück —
+  deshalb erschien der Text dann „wieder an der verschobenen Stelle".
+- **Abhilfe:** `kAktuell(pageN, fallback)` liest vor jedem Zug den JETZIGEN
+  Maßstab von der Seite (`#pageN img` → `dataset.k`) — eingebaut in
+  `startDrag` (verschieben/skalieren aller Annotationen), `startBildDrag`
+  (eingebettete Bilder) und `startBildRotate` (Dreh-Vorschau-Maßstab).
+- **Beweis (Browser-E2E):** Vorher Zoom + Zug → Objekt 85/60 px neben der
+  Soll-Lage, Server-Rechteck im alten Maßstab mitgerechnet; nachher
+  Abweichung **0/0 px**, Server-Rechteck exakt am gezogenen Punkt
+  (Δ 87/29 pt = 120/40 px ÷ k). Suite 149 PASS unverändert.
+
 ## v0.21.53 — Zeichenabstand bleibt nach dem Bearbeiten; kein Text-Schatten mehr im Editor
 - **Fehlerbehobung (Nutzer-Fund: „Zeichenabstand über das Mausrad geändert,
   angezeigt wird er — aber sobald man woanders hinklickt oder das Textfeld

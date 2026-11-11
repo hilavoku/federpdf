@@ -2,6 +2,27 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-11-11.
 
+## v0.21.57 — Einbrennen entfernt die Objekte wirklich aus der Datei
+- **Härtung (Nutzer-Frage: „Ich habe eine Signatur eingebrannt — warum kann
+  Acrobat sie trotzdem anklicken und blau markieren?"):** Das Einbrennen
+  entfernte die Annotationen bisher nur aus dem Seitenregister: `bake` zog
+  die Referenz, aber die Annot-Objekte blieben **verwaist mit allen Daten**
+  in der Datei — Signatur-Bilddaten, interner Marker samt Signaturdatei-
+  Name, bei inkrementellem Speichern zusätzlich alle Altrevisionen. Ein
+  PDF-Editor zeigt verwaiste Objekte nicht als Annotation (das blaue
+  „Quadrat" beim Klick auf eine eingebrannte Signatur in Acrobat ist die
+  normale Bild-Auswahl des Seiteninhalts) — aber die bewegliche Kopie war
+  weiterhin auffindbar und trug zur Dateigröße bei.
+- **Abhilfe:** Einbrennen schreibt die Datei jetzt **vollständig neu mit
+  Müllabfuhr** (garbage=3): verwaiste Annotation-Objekte, deren Bilddaten
+  und Altrevisionen werden physisch entfernt — nur der eingebrannte
+  Seiteninhalt bleibt. Gilt für „Speichern" wie für „Speichern unter".
+  Nach dem Einbrennen sind Undo-Stapel ohnehin geleert, die sonst nötige
+  Xref-Stabilität (Stabile-Objektnummern für Undo) entfällt dadurch.
+- **Beleg:** Nach dem Einbrennen finden sich weder `/Subtype/Stamp` noch
+  die internen Marker (`PDFW-SIG`/`PDFW-TXT`) in der Datei; der eingebrannte
+  Text und das Signatur-Bild liegen als Seiteninhalt vor (Suites-Checks).
+
 ## v0.21.56 — „Speichern unter" mit Einbrennen: Texte bleiben sofort sichtbar
 - **Fehlerbehobung (Nutzer-Fund: „Dokument unter anderem Namen speichern mit
   Einbrennen — nach dem Speichern sind die Texte weg, erst nach Zoom wieder

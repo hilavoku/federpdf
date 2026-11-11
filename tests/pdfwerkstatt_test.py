@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import time
 import sys
+import urllib.parse
 
 import requests
 
@@ -1089,6 +1090,59 @@ try:
     check("Altbestand: Spacing+Leading aus 6-Feld-Marker gelesen",
           atxt and abs((atxt.get("spacing") or 0) - 1.75) < 0.01
           and abs((atxt.get("leading") or 0) - 20) < 0.01, str(atxt))
+
+    # ---------- v0.21.57: Einbrennen entfernt die Objekte PHYSISCH (Nutzer-Frage:
+    # "Signatur nach dem Einbrennen in Acrobat noch anklickbar") ----------
+    # bake zieht nur die Referenz - die Annot-Objekte blieben VERWAIST samt
+    # Daten in der Datei (Signatur-NM-Marker PDFW-SIG, Bilddaten, Altrevisionen).
+    # Flatten schreibt jetzt VOLLSTAENDIG mit garbage=3: nur der eingebrannte
+    # Seiteninhalt bleibt, keine verschiebbare Kopie mehr auffindbar.
+    orph_pfad = os.path.join(FIXDIR, "pw_test_orphan.pdf")
+    osrc = pymupdf.open()
+    osrc.new_page().insert_text((72, 90), "orphan probe", fontsize=12)
+    osrc.save(orph_pfad)
+    osrc.close()
+    od = requests.get(f"{BASE}/api/open", params={"q": orph_pfad}, timeout=10).json()
+    oid = od["id"]
+    bufx = io.BytesIO()
+    _PILImage.new("RGBA", (200, 60), (20, 60, 160, 255)).save(bufx, "PNG")
+    osig = requests.post(f"{BASE}/api/signature/upload",
+                         files={"file": ("OrphanSig.png", bufx.getvalue(), "image/png")},
+                         data={"remove_bg": "0"}, timeout=10).json()["file"]
+    requests.post(f"{BASE}/api/annot/text/{oid}", data={
+        "page": "0", "rect": "[100,200,260,230]", "text": "baketext",
+        "size": "14", "font": "helv", "color": "0,0,0"}, timeout=10)
+    requests.post(f"{BASE}/api/stamp/{oid}", data={
+        "page": "0", "x": "300", "y": "100", "width": "140", "fname": osig}, timeout=10)
+    requests.post(f"{BASE}/api/save/{oid}?flatten=1", timeout=20)
+    oroh = open(orph_pfad, "rb").read()
+    check("Flatten (save): kein Annot-Objekt physisch (Stamp/TXT-Marker weg)",
+          b"PDFW-SIG" not in oroh and b"PDFW-TXT" not in oroh
+          and b"/Subtype/Stamp" not in oroh and b"/Subtype /Stamp" not in oroh,
+          f"{len(oroh)} B, Stamp={oroh.count(b'/Subtype/Stamp')}")
+    odoc = pymupdf.open(orph_pfad)
+    o_text_ok = "baketext" in odoc[0].get_text()
+    o_bilder = len(odoc[0].get_images())
+    o_annots = [a.type[1] for a in odoc[0].annots()]
+    odoc.close()
+    check("Flatten (save): Inhalt bleibt, Annotationen weg",
+          o_text_ok and o_bilder == 1 and o_annots == [],
+          f"text={o_text_ok} bilder={o_bilder} annots={o_annots}")
+    # saveas-Pfad mit flatten: Ziel-Datei ebenso physisch sauber
+    ziel_pfad = os.path.join(FIXDIR, "pw_test_orphan_neu.pdf")
+    od2 = requests.get(f"{BASE}/api/open", params={"q": orph_pfad}, timeout=10).json()
+    requests.post(f"{BASE}/api/annot/text/{od2['id']}", data={
+        "page": "0", "rect": "[100,200,260,230]", "text": "baketext2",
+        "size": "14", "font": "helv", "color": "0,0,0"}, timeout=10)
+    requests.post(f"{BASE}/api/stamp/{od2['id']}", data={
+        "page": "0", "x": "300", "y": "100", "width": "140", "fname": osig}, timeout=10)
+    sv = requests.get(f"{BASE}/api/saveas/{od2['id']}?" +
+                      urllib.parse.urlencode({"path": ziel_pfad, "flatten": 1}), timeout=20)
+    oroh2 = open(ziel_pfad, "rb").read()
+    check("Flatten (saveas): Ziel-Datei ohne Annot-Reste",
+          sv.ok and b"PDFW-SIG" not in oroh2 and b"PDFW-TXT" not in oroh2
+          and b"/Subtype/Stamp" not in oroh2 and b"/Subtype /Stamp" not in oroh2,
+          f"{len(oroh2)} B, Stamp={oroh2.count(b'/Subtype/Stamp')}")
 
     # ---------- v0.21.24: Druckpfad in Druckeraufloesung (Nutzer-Fund: unscharfer Ausdruck) ----------
     # Der Wrapper druckt jetzt per GDI: /api/druckinfo liefert Seitenmasse,

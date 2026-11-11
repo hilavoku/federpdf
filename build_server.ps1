@@ -35,6 +35,16 @@ Write-Host "=== PyInstaller-Build ==="
 Write-Host "pyinstaller exit: $LASTEXITCODE"
 
 $dist = Join-Path $root "app\dist\FederPDFServer\FederPDFServer.exe"
+if ($LASTEXITCODE -ne 0) {
+    # HÄRTUNG (11.11.2026): PyInstaller kann beim COLLECT am RAUMEN des alten
+    # dist scheitern (PermissionError, weil noch eine dist-EXE LAEUFT - z.B.
+    # ein Suite-/Debug-Server) und ein HALBBUNDLE hinterlassen (fehlende
+    # cryptography-Rust-PYD). Die EXE existiert trotzdem -> das alte
+    # "Test-Path -> OK" meldete einen kaputten Build als gut. Exit != 0 ist
+    # IMMER FEHLER, danach nichts weiter verkaufen.
+    Write-Host "SERVER-EXE UNGUELTIG: PyInstaller-Exit $LASTEXITCODE (Halbbundle moeglich - laeuft noch eine EXE aus diesem dist?)"
+    exit 1
+}
 if (Test-Path $dist) {
     $size = [math]::Round((Get-ChildItem (Split-Path $dist) -Recurse | Measure-Object Length -Sum).Sum/1MB,1)
     Write-Host "SERVER-EXE OK: $dist ($size MB)"

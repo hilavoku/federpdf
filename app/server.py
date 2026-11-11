@@ -34,7 +34,7 @@ os.makedirs(SIGN_DIR, exist_ok=True)
 
 app = FastAPI(title="FederPDF")
 
-APP_VERSION = "0.21.56"   # wird im Über-Dialog (Klick auf Logo/FederPDF) angezeigt
+APP_VERSION = "0.21.57"   # wird im Über-Dialog (Klick auf Logo/FederPDF) angezeigt
 
 
 @app.middleware("http")
@@ -1332,47 +1332,59 @@ def save(did: str, flatten: int = 0):
             raise
         docs[did]["doc"] = pymupdf.open(path)
 
-    try:
-        d.saveIncr()
-        # PyMuPDF-1.28.2-Falle (Nutzer-Fund 23.10.2026): ein ZWEITER
-        # inkrementeller Save am selben Document-Objekt schreibt dem neuen
-        # xref einen /Prev-SELBSTverweis - die Datei ist danach unlesbar
-        # (0 Seiten; PDFgear oeffnet sie trotzdem, FederPDF nicht mehr).
-        # Deshalb: (1) nach JEDEM Speichern das Document neu oeffnen - der
-        # naechste saveIncr ist immer wieder der erste; (2) die Plattendatei
-        # verifizieren und im Korruptionsfall die xref-Kette heilen bzw. aus
-        # dem RAM neu schreiben (der RAM ist die Wahrheit).
-        seiten_ram = d.page_count
-        try:
-            frisch = pymupdf.open(path)
-            platte_seiten = frisch.page_count
-            frisch.close()
-            if platte_seiten != seiten_ram:
-                raise ValueError("Plattendatei hat %d statt %d Seiten" %
-                                 (platte_seiten, seiten_ram))
-        except Exception:
-            try:
-                geheilt = _xref_prev_heilen(open(path, "rb").read())
-                if geheilt is None:
-                    raise ValueError("xref-Kette nicht heilbar")
-                frisch = pymupdf.open(stream=geheilt, filetype="pdf")
-                strom_seiten = frisch.page_count
-                frisch.close()
-                if strom_seiten != seiten_ram:
-                    raise ValueError("geheilte Datei hat falsche Seitenzahl")
-                heil_tmp = path + ".heal"
-                with open(heil_tmp, "wb") as f:
-                    f.write(geheilt)   # Datei dauerhaft heilen
-                d.close()
-                shutil.move(heil_tmp, path)
-                docs[did]["doc"] = pymupdf.open(path)
-            except Exception:
-                neu_schreiben(0)
-        else:
-            d.close()
-            docs[did]["doc"] = pymupdf.open(path)
-    except Exception:
+    if flatten:
+        # Einbrennen physisch sauber (v0.21.57, Nutzer-Frage "Signatur nach dem
+        # Einbrennen in Acrobat noch anklickbar"): bake zieht nur die Referenz -
+        # die Annot-Objekte bleiben VERWAIST mit allen Daten in der Datei
+        # (Signatur-NM-Marker PDFW-SIG + Bilddaten, auch alte Revisionen bei
+        # saveIncr). Nach bake sind Undos geleert - Xref-Stabilität unnoetig,
+        # deshalb VOLLSTAENDIG mit garbage=3 neu schreiben: verwaiste Objekte
+        # und Altrevisionen werden entfernt, nur der eingebrannte Seiteninhalt
+        # bleibt. (Acrobat zeigt verwaiste Objekte nicht als Annotation - das
+        # "anklickbare Quadrat" dort ist die Bild-Auswahl des Seiteninhalts.)
         neu_schreiben(3)
+    else:
+        try:
+            d.saveIncr()
+            # PyMuPDF-1.28.2-Falle (Nutzer-Fund 23.10.2026): ein ZWEITER
+            # inkrementeller Save am selben Document-Objekt schreibt dem neuen
+            # xref einen /Prev-SELBSTverweis - die Datei ist danach unlesbar
+            # (0 Seiten; PDFgear oeffnet sie trotzdem, FederPDF nicht mehr).
+            # Deshalb: (1) nach JEDEM Speichern das Document neu oeffnen - der
+            # naechste saveIncr ist immer wieder der erste; (2) die Plattendatei
+            # verifizieren und im Korruptionsfall die xref-Kette heilen bzw. aus
+            # dem RAM neu schreiben (der RAM ist die Wahrheit).
+            seiten_ram = d.page_count
+            try:
+                frisch = pymupdf.open(path)
+                platte_seiten = frisch.page_count
+                frisch.close()
+                if platte_seiten != seiten_ram:
+                    raise ValueError("Plattendatei hat %d statt %d Seiten" %
+                                     (platte_seiten, seiten_ram))
+            except Exception:
+                try:
+                    geheilt = _xref_prev_heilen(open(path, "rb").read())
+                    if geheilt is None:
+                        raise ValueError("xref-Kette nicht heilbar")
+                    frisch = pymupdf.open(stream=geheilt, filetype="pdf")
+                    strom_seiten = frisch.page_count
+                    frisch.close()
+                    if strom_seiten != seiten_ram:
+                        raise ValueError("geheilte Datei hat falsche Seitenzahl")
+                    heil_tmp = path + ".heal"
+                    with open(heil_tmp, "wb") as f:
+                        f.write(geheilt)   # Datei dauerhaft heilen
+                    d.close()
+                    shutil.move(heil_tmp, path)
+                    docs[did]["doc"] = pymupdf.open(path)
+                except Exception:
+                    neu_schreiben(0)
+            else:
+                d.close()
+                docs[did]["doc"] = pymupdf.open(path)
+        except Exception:
+            neu_schreiben(3)
     return {"ok": True, "path": path, "flattened": bool(flatten), "seiten": seiten}
 
 
@@ -1390,7 +1402,12 @@ def saveas(did: str, path: str, flatten: int = 0):
         if flatten:
             d.bake(widgets=False)
             undo_stacks[did] = []
-        d.save(path, deflate=True)
+            # garbage=3: auch hier die verwaisten Annot-Objekte samt Bilddaten
+            # physisch entfernen (v0.21.57, siehe /api/save) - Undos sind nach
+            # bake geleert, die Xref-Stabilitaet braucht es danach nicht mehr.
+            d.save(path, garbage=3, deflate=True)
+        else:
+            d.save(path, deflate=True)
         d.close()
         docs[did]["doc"] = pymupdf.open(path)
         docs[did]["path"] = path

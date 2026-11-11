@@ -1013,6 +1013,83 @@ try:
     kdoc.close()
     check("Altbestand geheilt: AP-Farbe aus Marker", geheilt, "")
 
+    # ---------- v0.21.53: Zeichenabstand bleibt nach dem Commit (Nutzer-Fund:
+    # Mausrad aendert den Abstand live, nach dem Verlassen war er weg) ----------
+    # Wurzel: _txt_spacing splittete den 6-Feld-Marker (seit v0.17.0 steht das
+    # Leading hinter dem Spacing) mit maxsplit=4 -> 'spacing:leading' klebte
+    # als EIN Feld zusammen, float() starb still, alle Lesepfade (Eigenschaften-
+    # liste, Editor-Oeffnen, Move-AP, Undo-Restore, Einbrennen) bekamen 0 -
+    # gleiche Fallenklasse wie die Farb-Falle v0.21.11. Folge war auch: das
+    # Wieder-Oeffnen des Editors startete bei 0 und der Folgecommit
+    # ueberschrieb den gespeicherten Wert zu 0.
+    sp_pfad = os.path.join(FIXDIR, "pw_test_spacing.pdf")
+    ssrc = pymupdf.open()
+    ssrc.new_page()
+    ssrc.save(sp_pfad)
+    ssrc.close()
+    sd = requests.get(f"{BASE}/api/open", params={"q": sp_pfad}, timeout=10).json()
+    sid = sd["id"]
+    r = requests.post(f"{BASE}/api/annot/text/{sid}", data={
+        "page": "0", "rect": "[100,100,300,132]", "text": "Abstandstext",
+        "size": "16", "font": "helv", "color": "0,0,0", "spacing": "2.5",
+        "leading": "0"}, timeout=10).json()
+    sp_xref = r.get("xref")
+    lann = requests.get(f"{BASE}/api/annots/{sid}/0", timeout=10).json()
+    stxt = next((a for a in lann if a.get("xref") == sp_xref), None)
+    check("Zeichenabstand in der Eigenschaftenliste nach dem Setzen",
+          stxt and abs((stxt.get("spacing") or 0) - 2.5) < 0.01, str(stxt))
+    # Move baut den AP neu - der Abstand muss die Liste ueberleben
+    requests.post(f"{BASE}/api/annot/move/{sid}", data={
+        "page": "0", "xref": str(sp_xref), "rect": "[120,140,320,172]"}, timeout=10)
+    lann = requests.get(f"{BASE}/api/annots/{sid}/0", timeout=10).json()
+    stxt = next((a for a in lann if a.get("xref") == sp_xref), None)
+    check("Zeichenabstand ueberlebt Verschieben",
+          stxt and abs((stxt.get("spacing") or 0) - 2.5) < 0.01, str(stxt))
+    # Erneutes Editieren (xref) mit neuem Abstand: Marker traegt den NEUEN Wert
+    r = requests.post(f"{BASE}/api/annot/text/{sid}", data={
+        "page": "0", "rect": "[120,140,320,172]", "text": "Abstandstext",
+        "size": "16", "font": "helv", "color": "0,0,0", "spacing": "4",
+        "leading": "0", "xref": str(sp_xref)}, timeout=10).json()
+    sp_xref2 = r.get("xref", sp_xref)
+    lann = requests.get(f"{BASE}/api/annots/{sid}/0", timeout=10).json()
+    stxt = next((a for a in lann if a.get("xref") == sp_xref2), None)
+    check("Zeichenabstand nach erneutem Editieren (xref)",
+          stxt and abs((stxt.get("spacing") or 0) - 4) < 0.01, str(stxt))
+    # Der AP traegt den Abstand als Tc-Operator (Druck/Save-Ansicht, andere Viewer)
+    requests.post(f"{BASE}/api/save/{sid}", timeout=15)
+    adoc = pymupdf.open(sp_pfad)
+    tc_ok = False
+    for apg in adoc:
+        for aa in apg.annots() or []:
+            if aa.type[1] == "FreeText":
+                _t, apw = adoc.xref_get_key(aa.xref, "AP/N")
+                if b"4 Tc" in (adoc.xref_stream(int(apw.split()[0])) or b""):
+                    tc_ok = True
+    adoc.close()
+    check("Zeichenabstand als Tc im Appearance-Stream", tc_ok, "")
+    # Undo (text-restore) stellt den VORHER-Wert samt Abstand wieder her
+    requests.post(f"{BASE}/api/undo/{sid}", timeout=10)
+    lann = requests.get(f"{BASE}/api/annots/{sid}/0", timeout=10).json()
+    stxt = next((a for a in lann if a.get("type") == "text"), None)
+    check("Undo stellt den alten Zeichenabstand wieder her",
+          stxt and abs((stxt.get("spacing") or 0) - 2.5) < 0.01, str(stxt))
+    # Altbestand: Marker im 6-Feld-Format muss auch beim NUR-LESEN stimmen
+    alt_pfad = os.path.join(FIXDIR, "pw_test_spacing_alt.pdf")
+    asrc = pymupdf.open()
+    apg = asrc.new_page()
+    aa = apg.add_freetext_annot(pymupdf.Rect(100, 200, 300, 232), "alt", fontsize=16,
+                                fontname="Helv", text_color=(0, 0, 0))
+    aa.update()
+    asrc.xref_set_key(aa.xref, "NM", "(PDFW-TXT:helv:16:0,0,0:1.75:20)")
+    asrc.save(alt_pfad)
+    asrc.close()
+    ad2 = requests.get(f"{BASE}/api/open", params={"q": alt_pfad}, timeout=10).json()
+    lann = requests.get(f"{BASE}/api/annots/{ad2['id']}/0", timeout=10).json()
+    atxt = next((a for a in lann if a.get("type") == "text"), None)
+    check("Altbestand: Spacing+Leading aus 6-Feld-Marker gelesen",
+          atxt and abs((atxt.get("spacing") or 0) - 1.75) < 0.01
+          and abs((atxt.get("leading") or 0) - 20) < 0.01, str(atxt))
+
     # ---------- v0.21.24: Druckpfad in Druckeraufloesung (Nutzer-Fund: unscharfer Ausdruck) ----------
     # Der Wrapper druckt jetzt per GDI: /api/druckinfo liefert Seitenmasse,
     # /api/druckseite rendert je Seite in Drucker-DPI (mit Annotationen) - statt

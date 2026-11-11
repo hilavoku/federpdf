@@ -2799,7 +2799,15 @@ function startInlineEdit(pageN, pdfX, pdfY, existing, vorgabe) {
     wrap.appendChild(delBtn);
   }
   wrap.appendChild(ta);
-  inline = {xref: existing ? existing.xref : 0, page: pageN, ta, delBtn, rect, vorgabe: !!vorgabe};
+  // Bestehende Annotation waehrend des Editierens verbergen: die transparente
+  // Textarea (z50) liegt ueber dem Objekt-Div (z5) - ohne Verbergen bleibt der
+  // ALTE Text als Schatten stehen, sobald Live-Aenderungen (Zeichenabstand,
+  // Groesse, Text) von ihm abweichen, und verschwindet erst beim Commit-
+  // Neuaufbau (Nutzer-Fund v0.21.53). Der Originaltext-Editor hat seit
+  // v0.17.0 ein deckendes Weiss - der Annotations-Editor hatte nichts.
+  const origDiv = existing ? wrap.querySelector('.annot[data-xref="' + existing.xref + '"]') : null;
+  if (origDiv) origDiv.style.visibility = 'hidden';
+  inline = {xref: existing ? existing.xref : 0, page: pageN, ta, delBtn, rect, vorgabe: !!vorgabe, origDiv};
   ta.focus();
   if (existing) ta.select();
   autoGrow();
@@ -2807,6 +2815,7 @@ function startInlineEdit(pageN, pdfX, pdfY, existing, vorgabe) {
 }
 function teardownInline() {
   if (!inline) return;
+  if (inline.origDiv) inline.origDiv.style.visibility = '';   // Abbruch (Esc): altes Objekt sofort wieder zeigen
   inline.ta.remove();
   if (inline.delBtn) inline.delBtn.remove();
   inline = null;
@@ -2819,6 +2828,7 @@ async function commitInline(keepMode) {
   // SOFORT entziehen: das Entfernen der Textarea feuert blur synchron -
   // der blur-Handler darf nicht wiedereintrittend ein zweites Mal committen.
   inline = null;
+  if (st.origDiv) st.origDiv.style.visibility = '';   // leerer/fehlgeschlagener Commit laedt nicht neu: Objekt zurueckzeigen
   st.ta.remove();
   if (st.delBtn) st.delBtn.remove();
   const text = st.ta.value;

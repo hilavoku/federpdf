@@ -1,6 +1,34 @@
 # FederPDF — Changelog
 
-Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-11-10.
+Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-11-11.
+
+## v0.21.53 — Zeichenabstand bleibt nach dem Bearbeiten; kein Text-Schatten mehr im Editor
+- **Fehlerbehobung (Nutzer-Fund: „Zeichenabstand über das Mausrad geändert,
+  angezeigt wird er — aber sobald man woanders hinklickt oder das Textfeld
+  verlässt, ist die Änderung weg"):** Seit v0.17.0 trägt der PDFW-TXT-Marker
+  sechs Felder (hinter der Farbe stehen Zeichenabstand **und** Zeilenabstand),
+  aber `_txt_spacing` splittete weiterhin mit `maxsplit=4` — das Spacing klebte
+  mit dem Leading als „2.5:0" in einem Feld zusammen, `float()` starb still,
+  und **alle Lesepfade bekamen stets 0**: Eigenschaftenliste (Overlay-Anzeige),
+  Editor-Öffnen (Feld startete bei 0 — der Folgecommit überschrieb den
+  gespeicherten Wert sogar zu 0), Verschieben (AP-Neubau ohne `Tc`),
+  Undo-Wiederherstellung und Einbrennen. Gleiche Fallenklasse wie die
+  Farb-Falle v0.21.11 (`maxsplit=3`), nur wurde der Spacing-Leser damals
+  übersehen. Geschrieben wurde der Abstand immer korrekt (Marker + AP +
+  Einbrennen) — lesen war die Lücke. Fix: `maxsplit=5` wie in `_txt_props`.
+- **Kein „Schatten" mehr beim nachträglichen Textändern:** Der Inline-Editor
+  für Text-Annotationen ist transparent und liegt über dem Objekt-Div —
+  bisher blieb der ALTE Text darunter sichtbar, sobald Live-Änderungen
+  (Zeichenabstand, Größe, Textinhalt) von ihm abweichen, und verschwand erst
+  beim Commit-Neuaufbau. Jetzt wird die bestehende Annotation während des
+  Editierers verborgen (`visibility:hidden`) und in jedem Pfad wieder
+  hergestellt — Abbruch per Esc, leerer Commit, fehlgeschlagener Commit
+  (Objekt kommt zurück), Löschen und erfolgreicher Commit (Neuaufbau).
+  Der Originaltext-Editor hatte seit v0.17.0 ein deckendes Weiß; der
+  Annotations-Editor hatte nichts dergleichen.
+- Suite: +6 Checks (Spacing in der Liste nach dem Setzen, nach Verschieben,
+  nach erneutem Editieren, als `Tc` im Appearance-Stream, Undo-Wieder-
+  herstellung, Altbestands-Marker mit 6 Feldern).
 
 ## v0.21.52 — Druckbilder ohne JPEG-Kacheln (Garbled-Druck behoben)
 - **Fehlerbehobung (Nutzer-Fund 10.11.2026, Gothaer-Beitragsrechnung am

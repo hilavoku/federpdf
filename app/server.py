@@ -34,7 +34,7 @@ os.makedirs(SIGN_DIR, exist_ok=True)
 
 app = FastAPI(title="FederPDF")
 
-APP_VERSION = "0.21.52"   # wird im Über-Dialog (Klick auf Logo/FederPDF) angezeigt
+APP_VERSION = "0.21.53"   # wird im Über-Dialog (Klick auf Logo/FederPDF) angezeigt
 
 
 @app.middleware("http")
@@ -2126,9 +2126,15 @@ def _pdf_string(text):
 
 
 def _txt_spacing(nm):
-    """Zeichenabstand (pt) aus einem PDFW-TXT-NM-Marker (5. Feld, 0 wenn fehlt)."""
+    """Zeichenabstand (pt) aus einem PDFW-TXT-NM-Marker (5. Feld, 0 wenn fehlt).
+    maxsplit=5 wie in _txt_props: Hinter dem Spacing steht seit v0.17.0 noch
+    das Leading (6. Feld) - maxsplit=4 liess 'spacing:leading' als EIN Feld
+    zusammenkleben, float() starb still, und alle Lesepfade (Eigenschaften-
+    liste, Editor-Oeffnen, Move-AP, Undo-Restore, Einbrennen) bekamen stets 0
+    (Nutzer-Fund v0.21.53: Zeichenabstand weg, sobald das Textfeld verlassen
+    wird - gleiche Fallenklasse wie die Farb-Falle v0.21.11)."""
     if nm.startswith("PDFW-TXT:"):
-        teile = nm.split(":", 4)
+        teile = nm.split(":", 5)
         if len(teile) >= 5:
             try:
                 return float(teile[4])

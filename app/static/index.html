@@ -3433,10 +3433,17 @@ window.pwSaveasDone = async function (ok, path) {
     stat(E('Gespeichert unter: ', 'Saved as: ') + path + (saveasFlatten ? E(' (eingebrannt)', ' (flattened)') : '') + E(' – weiter gearbeitet wird in dieser Datei.', ' – work continues in this file.'), true);
     stempel('saveAsBtn');
     if (saveasFlatten) {
-      await reloadAllAnnotOverlays();
+      // Reihenfolge-Falle (v0.21.56, Nutzer-Fund "nach Speichern unter mit Einbrennen
+      // sind die Texte weg, erst nach Zoom wieder da"): reloadAllAnnotOverlays RAEUMT
+      // die .annot-Divs ab (der Text ist jetzt Seiteninhalt) - der Seiten-Filter
+      // danach fand keine Seite mehr und refreshPage lief NIE, die Seitenbilder
+      // blieben das alte Papier ohne Text. Betroffene Seiten daher VORHER einsammeln.
+      const betroffen = [];
       document.querySelectorAll('.pagewrap').forEach(w => {   // Seiten mit Overlays = eingebrannte Seiten
-        if (w.querySelector('.annot')) refreshPage(parseInt(w.dataset.page));
+        if (w.querySelector('.annot')) betroffen.push(parseInt(w.dataset.page));
       });
+      await reloadAllAnnotOverlays();
+      betroffen.forEach(n => refreshPage(n));
     }
     saveasFlatten = 0;
   } else stat(E('Speichern unter fehlgeschlagen', 'Save as failed'));

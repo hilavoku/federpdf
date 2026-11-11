@@ -2,6 +2,23 @@
 
 Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-11-11.
 
+## v0.21.56 — „Speichern unter" mit Einbrennen: Texte bleiben sofort sichtbar
+- **Fehlerbehobung (Nutzer-Fund: „Dokument unter anderem Namen speichern mit
+  Einbrennen — nach dem Speichern sind die Texte weg, erst nach Zoom wieder
+  sichtbar"):** Eine Reihenfolge-Falle im Abschluss des „Speichern unter".
+  Nach dem Einbrennen räumt die Oberfläche zuerst die Annotations-Overlays ab
+  (korrekt — der Text ist jetzt Teil des Seiteninhalts), suchte aber
+  DANACH die betroffenen Seiten anhand noch vorhandener Overlay-Divs, um
+  deren Seitenbilder neu zu laden. Da die Overlays zu diesem Zeitpunkt
+  bereits weg waren, fand der Filter keine Seite, das Neuladen lief nie —
+  die Bildschirmbilder zeigten weiter das alte Papier ohne Text. Erst das
+  nächste Zoomen baute die Seiten neu auf (nun mit eingebranntem Text).
+  Beim normalen „Speichern" trat das nicht auf, weil dort der Server die
+  betroffenen Seiten meldet.
+- **Abhilfe:** Die betroffenen Seiten werden VOR dem Overlay-Abbau
+  eingesammelt und danach neu geladen — der eingebrannte Text ist sofort
+  sichtbar.
+
 ## v0.21.55 — Gesperrter Text bleibt beim Zoomen in seinen Formularzellen
 - **Fehlerbehobung (Nutzer-Fund mit Screenshots, Kilometerstand/Datum in
   Kästchenfelder eingetragen: „je nach Zoomfaktor steht der von mir

@@ -1,6 +1,29 @@
 # FederPDF — Changelog
 
-Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-11-11.
+Alle Versionen vom ersten Prototyp bis heute. Datum: 2026-11-14.
+
+## v0.21.58 — Textrahmen bleibt einzeilig; Schriftanzeige folgt der Auswahl
+- **Fehlerbehobung (Nutzer-Fund: „Textrahmen nur eine Zeile hoch gezogen — der
+  Rahmen wird trotzdem auf zwei Zeilen erweitert", besonders beim Ausfüllen
+  von Formularen):** Drei Stellen blähten den Kasten auf. Der Editor startete
+  mit dem HTML-Standard von zwei Textzeilen (selbst leer), der aufgezogene
+  Rahmen wurde auf mindestens 22 pt aufgefüllt, und der Abschluss rechnete
+  großzügig 1,5-fache Schrifthöhe pro Zeile. Jetzt startet der Editor
+  einzeilig, die gezogene Höhe bleibt (Minimum nur noch gegen absurd flache
+  Kästen), und der Abschluss rechnet 1,3-fache Schrifthöhe — ein
+  Einzeilen-Kasten bleibt so hoch wie eine Zeile (11 pt → 14,3 pt statt
+  bisher 22 pt). Mehrzeiliger Text wächst weiterhin automatisch mit.
+  Auch der Standard-Kasten beim einfachen Klick schrumpft von 26 pt auf
+  16 pt auf eine Zeile.
+- **Fehlerbehobung (Nutzer-Fund: „Schriftanzeige oben bleibt beim Anklicken
+  eines Textes auf der Schrift des anderen Textes stehen"):** Ein Klick auf
+  einen bestehenden Text stellte die Formatleiste nicht auf seine
+  Eigenschaften — die Anzeige zeigte weiter die zuletzt verwendete Schrift.
+  Da eine Auswahlliste beim Wählen des bereits angezeigten Werts kein
+  Änderungsereignis feuert, brauchte der Wechsel den Umweg „erst eine andere
+  Schrift wählen, dann zurück". Jetzt stellt ein Klick auf einen Text
+  Schrift, Stil, Größe, Zeichenabstand und Farbe in der Formatleiste ein —
+  ein direkter Wechsel genügt.
 
 ## v0.21.57 — Einbrennen entfernt die Objekte wirklich aus der Datei
 - **Härtung (Nutzer-Frage: „Ich habe eine Signatur eingebrannt — warum kann
